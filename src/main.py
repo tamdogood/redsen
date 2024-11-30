@@ -60,6 +60,7 @@ def main():
                 "bearish_comments_ratio": "mean",
                 "current_price": "first",
                 "price_change_2w": "first",
+                "price_change_2d": "first",
                 "avg_volume": "first",
                 "volume_change": "first",
                 "sma_20": "first",
@@ -80,7 +81,7 @@ def main():
     )
 
     top_stocks = combined_results.sort_values("composite_score", ascending=False).head(
-        20
+        50
     )
 
     # Save results and generate report

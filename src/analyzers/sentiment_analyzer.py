@@ -9,10 +9,14 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
 from dotenv import load_dotenv
-from supabase import create_client, Client
 from connectors.supabase_connector import SupabaseConnector
 from utils.logging_config import logger
+from openai import OpenAI
+import json
+import os
 
+
+load_dotenv()
 
 # Download necessary NLTK resources
 nltk.download("vader_lexicon", quiet=True)
@@ -79,6 +83,10 @@ class EnhancedStockAnalyzer:
             "CUDA",
             "NFT",
             "NFTs",
+            "UK",
+            "EUR",
+            "EU",
+            "JP",
         }
 
     def is_valid_ticker(self, ticker: str) -> bool:
@@ -104,20 +112,126 @@ class EnhancedStockAnalyzer:
             return False
 
     def extract_stock_tickers(self, text: str) -> List[str]:
-        """Extract and validate stock tickers from text"""
-        tickers = re.findall(r"\$?([A-Z]{1,5})\b", text)
-        valid_tickers = []
+        """
+        Extract stock tickers using OpenAI with fallback to regex
 
-        for ticker in tickers:
-            if (
-                len(ticker) >= 1
-                and len(ticker) <= 5
-                and ticker not in self.invalid_tickers
-                and self.is_valid_ticker(ticker)
-            ):
-                valid_tickers.append(ticker)
+        Args:
+            text (str): Text to analyze for stock mentions
 
-        return valid_tickers
+        Returns:
+            List[str]: List of valid stock tickers
+        """
+        try:
+            # First try regex extraction
+            tickers = self._extract_tickers_with_regex(text)
+
+            # If regex fails or returns no tickers, fallback to OpenAI
+            if not tickers:
+                tickers = self._extract_tickers_with_openai(text)
+
+            # Validate tickers
+            valid_tickers = []
+            for ticker in tickers:
+                if (
+                    len(ticker) >= 1
+                    and len(ticker) <= 5
+                    and ticker not in self.invalid_tickers
+                    and self.is_valid_ticker(ticker)
+                ):
+                    valid_tickers.append(ticker)
+
+            return list(set(valid_tickers))  # Remove duplicates
+
+        except Exception as e:
+            logger.warning(
+                f"Error in ticker extraction: {str(e)}. Falling back to regex."
+            )
+            return self._extract_tickers_with_regex(text)
+
+    def _extract_tickers_with_openai(self, text: str) -> List[str]:
+        """
+        Use OpenAI to extract stock tickers from text
+
+        Args:
+            text (str): Text to analyze
+
+        Returns:
+            List[str]: Extracted stock tickers
+        """
+        try:
+            # Initialize OpenAI client (do this in __init__ if used frequently)
+            client = OpenAI(
+                api_key=os.getenv("OPENAI_API_KEY", ""),
+            )
+
+            # Prepare the prompt
+            prompt = f"""Extract stock tickers from the following text. Return only the tickers in a JSON array format. 
+            Rules:
+            - Include tickers with or without $ prefix
+            - Only include tickers 1-5 characters long
+            - Exclude common words that look like tickers
+            - If no valid tickers found, return empty array
+            - Do not include explanation, only return the JSON array
+            
+            Text: {text}
+            """
+
+            # Make API call
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a financial analyst that extracts stock tickers from text. Only respond with a JSON array of tickers.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0,
+                max_tokens=150,
+            )
+
+            # Parse response
+            try:
+                tickers_text = response.choices[0].message.content.strip()
+                # Handle potential JSON formatting issues
+                tickers_text = tickers_text.replace("'", '"')
+                if not tickers_text.startswith("["):
+                    tickers_text = f"[{tickers_text}]"
+                tickers = json.loads(tickers_text)
+
+                # Clean tickers
+                tickers = [ticker.strip("$") for ticker in tickers if ticker]
+                return tickers
+
+            except json.JSONDecodeError as e:
+                logger.warning(f"Error parsing OpenAI response: {str(e)}")
+                return []
+
+        except Exception as e:
+            logger.warning(f"Error calling OpenAI API: {str(e)}")
+            return []
+
+    def _extract_tickers_with_regex(self, text: str) -> List[str]:
+        """
+        Fallback method using regex to extract stock tickers
+
+        Args:
+            text (str): Text to analyze
+
+        Returns:
+            List[str]: Extracted stock tickers
+        """
+        # Enhanced regex pattern
+        patterns = [
+            r"\$([A-Z]{1,5})\b",  # Matches tickers with $ prefix
+            r"\b([A-Z]{1,5})\b(?!\.[A-Z]{1,2})",  # Matches uppercase words, excludes file extensions
+        ]
+
+        tickers = []
+        for pattern in patterns:
+            tickers.extend(re.findall(pattern, text))
+
+        return list(set(tickers))  # Remove duplicates
 
     def get_stock_metrics(self, ticker: str) -> Optional[Dict]:
         """Fetch stock metrics with improved error handling"""
@@ -143,6 +257,7 @@ class EnhancedStockAnalyzer:
             try:
                 current_price = hist["Close"].iloc[-1]
                 price_2w_ago = hist["Close"].iloc[-10]
+                price_2d_ago = hist["Close"].iloc[-2]
                 avg_volume = hist["Volume"].mean()
 
                 # Verify we have valid numerical data
@@ -158,6 +273,9 @@ class EnhancedStockAnalyzer:
                     "current_price": round(current_price, 2),
                     "price_change_2w": round(
                         ((current_price - price_2w_ago) / price_2w_ago) * 100, 2
+                    ),
+                    "price_change_2d": round(
+                        ((current_price - price_2d_ago) / price_2d_ago) * 100, 2
                     ),
                     "avg_volume": int(avg_volume),
                     "volume_change": round(
