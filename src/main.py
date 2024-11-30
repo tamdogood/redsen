@@ -98,7 +98,7 @@ def main():
 
     # Save results and generate report
     analyzer.save_results(top_stocks)
-    # analyzer.db.save_sentiment_analysis(top_stocks)
+    analyzer.db.save_sentiment_analysis(top_stocks)
 
 
 if __name__ == "__main__":
