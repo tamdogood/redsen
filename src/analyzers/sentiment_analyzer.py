@@ -41,6 +41,11 @@ class EnhancedStockAnalyzer:
             supabase_url=supabase_url, supabase_key=supabase_key
         )
 
+        # Initialize OpenAI client (do this in __init__ if used frequently)
+        self.openai_client = OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY", ""),
+        )
+
         self.sia = SentimentIntensityAnalyzer()
         self.stock_data_cache = {}
 
@@ -170,10 +175,6 @@ class EnhancedStockAnalyzer:
             List[str]: Extracted stock tickers
         """
         try:
-            # Initialize OpenAI client (do this in __init__ if used frequently)
-            client = OpenAI(
-                api_key=os.getenv("OPENAI_API_KEY", ""),
-            )
 
             # Prepare the prompt
             prompt = f"""Extract stock tickers from the following text. Return only the tickers in a JSON array format. 
@@ -188,8 +189,8 @@ class EnhancedStockAnalyzer:
             """
 
             # Make API call
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o",
                 messages=[
                     {
                         "role": "system",
@@ -333,6 +334,123 @@ class EnhancedStockAnalyzer:
             )
             return None
 
+    def _calculate_basic_metrics(self, hist: pd.DataFrame) -> Dict:
+        """
+        Calculate basic price and volume metrics
+
+        Args:
+            hist: Historical price data DataFrame
+        Returns:
+            Dict of calculated metrics
+        """
+        try:
+            current_price = hist["Close"].iloc[-1]
+            price_2w_ago = hist["Close"].iloc[-10]
+            price_2d_ago = hist["Close"].iloc[-2]
+            avg_volume = hist["Volume"].mean()
+
+            # Verify we have valid numerical data
+            if not (
+                pd.notnull(current_price)
+                and pd.notnull(price_2w_ago)
+                and pd.notnull(avg_volume)
+            ):
+                logger.error("Invalid price or volume data")
+                return {}
+
+            return {
+                "current_price": round(current_price, 2),
+                "price_change_2w": round(
+                    ((current_price - price_2w_ago) / price_2w_ago) * 100, 2
+                ),
+                "price_change_2d": round(
+                    ((current_price - price_2d_ago) / price_2d_ago) * 100, 2
+                ),
+                "avg_volume": int(avg_volume),
+                "volume_change": round(
+                    ((hist["Volume"].iloc[-1] - avg_volume) / avg_volume) * 100, 2
+                ),
+            }
+        except Exception as e:
+            logger.error(f"Error calculating basic metrics: {str(e)}")
+            return {}
+
+    def get_stock_metrics(self, ticker: str) -> Optional[Dict]:
+        """Fetch stock metrics with improved error handling"""
+        try:
+            if ticker in self.stock_data_cache:
+                return self.stock_data_cache[ticker]
+
+            stock = yf.Ticker(ticker)
+
+            # Get historical data
+            hist = stock.history(period="1mo")
+
+            if hist.empty:
+                logger.error(f"{ticker}: No price data found (period=1mo)")
+                return None
+
+            if len(hist) < 10:
+                logger.error(
+                    f"{ticker}: Insufficient price history (only {len(hist)} days available)"
+                )
+                return None
+
+            try:
+                # Calculate basic metrics
+                metrics = self._calculate_basic_metrics(hist)
+                technical_indicators = self._calculate_technical_indicators(hist)
+                metrics.update(technical_indicators)
+                if not metrics:
+                    return None
+
+                # Add technical indicators
+                try:
+                    metrics.update(
+                        {
+                            "sma_20": round(
+                                hist["Close"].rolling(window=20).mean().iloc[-1], 2
+                            ),
+                            "rsi": round(self._calculate_rsi(hist["Close"]), 2),
+                            "volatility": round(
+                                hist["Close"].pct_change().std() * np.sqrt(252) * 100, 2
+                            ),
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"{ticker}: Could not calculate technical indicators: {str(e)}"
+                    )
+                    metrics.update({"sma_20": None, "rsi": None, "volatility": None})
+
+                # Add additional info
+                try:
+                    info = stock.info
+                    metrics.update(
+                        {
+                            "market_cap": info.get("marketCap"),
+                            "pe_ratio": info.get("forwardPE"),
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"{ticker}: Could not fetch additional info: {str(e)}"
+                    )
+                    metrics.update({"market_cap": None, "pe_ratio": None})
+
+                self.stock_data_cache[ticker] = metrics
+                return metrics
+
+            except Exception as e:
+                logger.error(f"{ticker}: Error calculating metrics: {str(e)}")
+                return None
+
+        except Exception as e:
+            logger.error(
+                f"{ticker}: possibly delisted; no price data found (period=1mo)"
+            )
+            return None
+
     def _calculate_rsi(self, prices: pd.Series, periods: int = 14) -> float:
         """Calculate RSI technical indicator"""
         delta = prices.diff()
@@ -340,6 +458,61 @@ class EnhancedStockAnalyzer:
         loss = (-delta.where(delta < 0, 0)).rolling(window=periods).mean()
         rs = gain / loss
         return 100 - (100 / (1 + rs.iloc[-1]))
+
+    def _get_fundamental_metrics(self, stock) -> Dict:
+        """Get fundamental metrics for a stock"""
+        try:
+            info = stock.info
+            return {
+                "market_cap": info.get("marketCap"),
+                "pe_ratio": info.get("forwardPE"),
+                "beta": info.get("beta"),
+                "dividend_yield": info.get("dividendYield"),
+                "profit_margins": info.get("profitMargins"),
+                "revenue_growth": info.get("revenueGrowth"),
+            }
+        except Exception as e:
+            logger.warning(f"Error fetching fundamental metrics: {str(e)}")
+            return {}
+
+    def _get_market_metrics(self, stock) -> Dict:
+        """Get market-related metrics for a stock"""
+        try:
+            info = stock.info
+            return {
+                "target_price": info.get("targetMeanPrice"),
+                "recommendation": info.get("recommendationKey"),
+                "analyst_count": info.get("numberOfAnalystOpinions"),
+                "short_ratio": info.get("shortRatio"),
+                "relative_volume": info.get("regularMarketVolume", 0)
+                / (info.get("averageVolume", 1) or 1),
+            }
+        except Exception as e:
+            logger.warning(f"Error fetching market metrics: {str(e)}")
+            return {}
+
+    def calculate_technical_indicators(self, hist: pd.DataFrame) -> Dict:
+        """Calculate comprehensive technical indicators"""
+        try:
+            close = hist["Close"]
+            volume = hist["Volume"]
+
+            return {
+                # Trend Indicators
+                "sma_20": round(close.rolling(window=20).mean().iloc[-1], 2),
+                "ema_9": round(close.ewm(span=9).mean().iloc[-1], 2),
+                "rsi": round(self._calculate_rsi(close), 2),
+                # Volatility Indicators
+                "volatility": round(close.pct_change().std() * np.sqrt(252) * 100, 2),
+                # Volume Indicators
+                "volume_sma": round(volume.rolling(window=20).mean().iloc[-1], 2),
+                "volume_ratio": round(
+                    volume.iloc[-1] / volume.rolling(window=20).mean().iloc[-1], 2
+                ),
+            }
+        except Exception as e:
+            logger.warning(f"Error calculating technical indicators: {str(e)}")
+            return {}
 
     def analyze_subreddit_sentiment(
         self, subreddit_name: str, time_filter: str = "week", limit: int = 5
@@ -420,7 +593,7 @@ class EnhancedStockAnalyzer:
                 )
 
                 # Analyze comments with weighted scoring
-                submission.comments.replace_more(limit=0)
+                submission.comments.replace_more(limit=20)
                 comments = submission.comments.list()
 
                 comment_data = []
@@ -539,74 +712,263 @@ class EnhancedStockAnalyzer:
 
     def _analyze_text_sentiment(self, text: str) -> Dict[str, float]:
         """
-        Enhanced sentiment analysis for text
+        Enhanced sentiment analysis combining VADER, LLM, and technical features
 
         Args:
             text: Text to analyze
 
         Returns:
-            Dict containing sentiment scores and metadata
+            Dict containing combined sentiment scores and metadata
         """
-        # Get base VADER sentiment
-        vader_scores = self.sia.polarity_scores(text)
+        try:
+            # Get base VADER sentiment
+            vader_scores = self.sia.polarity_scores(text)
 
-        # Additional sentiment features
-        sentiment_features = {
+            # Get basic sentiment features
+            basic_features = self._get_basic_sentiment_features(text)
+
+            # Get LLM sentiment if text is substantial enough (e.g., > 50 chars)
+            llm_sentiment = {}
+            if len(text) > 50:
+                try:
+                    llm_sentiment = self._get_llm_sentiment(text)
+                except Exception as e:
+                    logger.warning(f"LLM sentiment analysis failed: {str(e)}")
+                    llm_sentiment = {
+                        "score": 0,
+                        "features": {},
+                        "confidence": 0,
+                        "terms": [],
+                    }
+
+            # Combine base scores with adjustments
+            base_score = vader_scores["compound"]
+
+            # Adjust sentiment based on features and context
+            adjusted_score = self._adjust_sentiment_score(
+                base_score, basic_features, text
+            )
+
+            # Calculate confidence score
+            confidence_score = min(
+                1.0,
+                (
+                    0.4 * (1 - vader_scores["neu"])  # VADER confidence
+                    + 0.4 * llm_sentiment.get("confidence", 0)  # LLM confidence
+                    + 0.2
+                    * (len(text) / 1000)  # Length-based confidence (max at 1000 chars)
+                ),
+            )
+
+            # Combine all signals
+            final_compound = (
+                adjusted_score * 0.4  # Adjusted VADER score
+                + llm_sentiment.get("score", 0) * 0.4  # LLM score
+                + base_score * 0.2  # Original VADER score
+            )
+
+            # Ensure the final score is within [-1, 1]
+            final_compound = max(min(final_compound, 1.0), -1.0)
+
+            return {
+                "compound": final_compound,
+                "confidence": confidence_score,
+                "vader_scores": vader_scores,
+                "llm_sentiment": llm_sentiment,
+                "features": basic_features,
+                "terms": llm_sentiment.get("terms", []),
+                "pos": vader_scores["pos"],
+                "neg": vader_scores["neg"],
+                "neu": vader_scores["neu"],
+            }
+
+        except Exception as e:
+            logger.error(f"Error in enhanced sentiment analysis: {str(e)}")
+            # Fallback to basic VADER sentiment
+            vader_scores = self.sia.polarity_scores(text)
+            return {
+                "compound": vader_scores["compound"],
+                "confidence": 0.3,  # Low confidence for fallback
+                "pos": vader_scores["pos"],
+                "neg": vader_scores["neg"],
+                "neu": vader_scores["neu"],
+                "features": self._get_basic_sentiment_features(text),
+            }
+
+    def _adjust_sentiment_score(
+        self, base_score: float, features: Dict, text: str
+    ) -> float:
+        """
+        Adjust sentiment score based on financial context and features
+
+        Args:
+            base_score: Base sentiment score from VADER
+            features: Dictionary of extracted features
+            text: Original text
+
+        Returns:
+            float: Adjusted sentiment score
+        """
+        adjustment = 0.0
+
+        # Adjust for financial-specific features
+        if features["has_exclamation"]:
+            adjustment += 0.1
+        if features["has_dollar_sign"]:
+            adjustment += 0.05
+        if features["has_rocket"] or features["has_moon"]:
+            adjustment += 0.15
+        if features["has_buy_terms"]:
+            adjustment += 0.1
+        if features["has_sell_terms"]:
+            adjustment -= 0.1
+        if features["has_analysis_terms"]:
+            adjustment += 0.05  # Slight boost for analytical content
+
+        # Adjust for specific financial terms
+        text_lower = text.lower()
+
+        # Positive financial terms
+        positive_terms = [
+            "upgrade",
+            "beat",
+            "exceeded",
+            "growth",
+            "profit",
+            "outperform",
+            "strong",
+            "higher",
+            "up",
+            "gain",
+            "positive",
+            "buy",
+            "accumulate",
+            "bullish",
+        ]
+
+        # Negative financial terms
+        negative_terms = [
+            "downgrade",
+            "miss",
+            "missed",
+            "decline",
+            "loss",
+            "underperform",
+            "weak",
+            "lower",
+            "down",
+            "negative",
+            "sell",
+            "bearish",
+            "warning",
+        ]
+
+        # Count term occurrences and adjust
+        positive_count = sum(1 for term in positive_terms if term in text_lower)
+        negative_count = sum(1 for term in negative_terms if term in text_lower)
+
+        adjustment += (positive_count * 0.05) - (negative_count * 0.05)
+
+        # Additional context adjustments
+        if "bankruptcy" in text_lower or "bankrupt" in text_lower:
+            adjustment -= 0.3
+        if "merger" in text_lower or "acquisition" in text_lower:
+            adjustment += 0.2
+        if "scandal" in text_lower or "fraud" in text_lower:
+            adjustment -= 0.3
+        if "earnings" in text_lower:
+            if any(term in text_lower for term in ["beat", "exceeded", "above"]):
+                adjustment += 0.2
+            elif any(term in text_lower for term in ["miss", "below", "disappoint"]):
+                adjustment -= 0.2
+
+        # Scale adjustment based on base score direction
+        if base_score > 0:
+            adjustment = min(adjustment, 1 - base_score)  # Don't exceed 1
+        elif base_score < 0:
+            adjustment = max(adjustment, -1 - base_score)  # Don't go below -1
+
+        # Calculate final score
+        final_score = base_score + adjustment
+
+        # Ensure the final score is within [-1, 1]
+        return max(min(final_score, 1.0), -1.0)
+
+    def _get_basic_sentiment_features(self, text: str) -> Dict:
+        """Extract basic sentiment features from text"""
+        text_lower = text.lower()
+        return {
             "has_exclamation": "!" in text,
             "has_dollar_sign": "$" in text,
-            "has_rocket": "🚀" in text or "rocket" in text.lower(),
-            "has_moon": "🌙" in text.lower() or "moon" in text.lower(),
+            "has_rocket": "🚀" in text or "rocket" in text_lower,
+            "has_moon": "🌙" in text_lower or "moon" in text_lower,
             "has_buy_terms": any(
-                term in text.lower() for term in ["buy", "long", "bull", "calls"]
+                term in text_lower
+                for term in [
+                    "buy",
+                    "long",
+                    "bull",
+                    "calls",
+                    "bullish",
+                    "upside",
+                    "breakout",
+                    "growth",
+                    "strong",
+                    "higher",
+                    "accumulate",
+                ]
             ),
             "has_sell_terms": any(
-                term in text.lower() for term in ["sell", "short", "bear", "puts"]
+                term in text_lower
+                for term in [
+                    "sell",
+                    "short",
+                    "bear",
+                    "puts",
+                    "bearish",
+                    "downside",
+                    "breakdown",
+                    "weak",
+                    "lower",
+                    "crash",
+                    "dump",
+                ]
             ),
-        }
-
-        # Adjust compound score based on additional features
-        compound_adjustment = 0
-        if sentiment_features["has_exclamation"]:
-            compound_adjustment += 0.1
-        if sentiment_features["has_dollar_sign"]:
-            compound_adjustment += 0.05
-        if sentiment_features["has_rocket"] or sentiment_features["has_moon"]:
-            compound_adjustment += 0.15
-        if sentiment_features["has_buy_terms"]:
-            compound_adjustment += 0.1
-        if sentiment_features["has_sell_terms"]:
-            compound_adjustment -= 0.1
-
-        # Ensure final compound score stays within [-1, 1]
-        adjusted_compound = max(
-            min(vader_scores["compound"] + compound_adjustment, 1), -1
-        )
-
-        return {
-            "compound": adjusted_compound,
-            "pos": vader_scores["pos"],
-            "neg": vader_scores["neg"],
-            "neu": vader_scores["neu"],
-            "features": sentiment_features,
+            "has_analysis_terms": any(
+                term in text_lower
+                for term in [
+                    "analysis",
+                    "technical",
+                    "fundamental",
+                    "chart",
+                    "pattern",
+                    "trend",
+                    "support",
+                    "resistance",
+                    "price target",
+                    "valuation",
+                    "forecast",
+                ]
+            ),
         }
 
     def _calculate_comment_weight(self, comment) -> float:
         """
-        Calculate weight for a comment based on various factors
+        Calculate enhanced weight for a comment based on various factors
 
         Args:
             comment: Reddit comment object
 
         Returns:
-            float: Weight between 0 and 2
+            float: Weight between 0.5 and 2.0
         """
-        # Base weight from comment score
+        # Base score weight
         if comment.score <= 0:
             score_weight = 0.5
         else:
             score_weight = min(1 + np.log1p(comment.score) / 10, 1.5)
 
-        # Account for comment awards
+        # Awards weight
         try:
             awards_count = (
                 len(comment.all_awardings) if hasattr(comment, "all_awardings") else 0
@@ -615,13 +977,132 @@ class EnhancedStockAnalyzer:
         except:
             awards_weight = 1.0
 
-        # Account for comment length (longer comments might be more substantive)
+        # Content quality weights
         length_weight = min(1 + (len(comment.body) / 1000), 1.2)
 
-        # Calculate final weight
-        final_weight = score_weight * 0.5 + awards_weight * 0.3 + length_weight * 0.2
+        # Check for quality indicators
+        quality_indicators = {
+            "has_numbers": bool(re.search(r"\d+", comment.body)),
+            "has_links": "http" in comment.body.lower(),
+            "has_analysis": any(
+                term in comment.body.lower()
+                for term in [
+                    "analysis",
+                    "research",
+                    "report",
+                    "study",
+                    "data",
+                    "evidence",
+                    "source",
+                    "reference",
+                ]
+            ),
+        }
 
-        return min(max(final_weight, 0.5), 2.0)  # Ensure weight is between 0.5 and 2
+        quality_score = 1.0
+        if quality_indicators["has_numbers"]:
+            quality_score += 0.1
+        if quality_indicators["has_links"]:
+            quality_score += 0.1
+        if quality_indicators["has_analysis"]:
+            quality_score += 0.2
+
+        # Calculate final weight
+        final_weight = (
+            score_weight * 0.4
+            + awards_weight * 0.2
+            + length_weight * 0.2
+            + quality_score * 0.2
+        )
+
+        # Ensure weight is within bounds
+        return min(max(final_weight, 0.5), 2.0)
+
+    def _get_llm_sentiment(self, text: str) -> Dict:
+        """Get sentiment analysis from OpenAI"""
+        prompt = f"""Analyze the sentiment of this financial text and provide:
+        1. A sentiment score between -1 and 1
+        2. Key features identified (bullish/bearish signals, confidence level)
+        3. Any specific financial terms or indicators mentioned
+        
+        Text: {text}
+        
+        Return the analysis in JSON format with these keys:
+        - score: float
+        - features: dict
+        - confidence: float
+        - terms: list
+        """
+
+        response = self.openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a financial analyst expert in market sentiment analysis.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0,
+        )
+
+        try:
+            analysis = json.loads(response.choices[0].message.content)
+            return analysis
+        except:
+            return {"score": 0, "features": {}, "confidence": 0, "terms": []}
+
+    def _calculate_technical_indicators(self, hist: pd.DataFrame) -> Dict:
+        """Calculate comprehensive technical indicators"""
+        try:
+            close = hist["Close"]
+            volume = hist["Volume"]
+
+            return {
+                # Trend Indicators
+                "sma_20": round(close.rolling(window=20).mean().iloc[-1], 2),
+                "ema_9": round(close.ewm(span=9).mean().iloc[-1], 2),
+                "rsi": round(self._calculate_rsi(close), 2),
+                # Volatility Indicators
+                "volatility": round(close.pct_change().std() * np.sqrt(252) * 100, 2),
+                "bollinger_upper": round(
+                    close.rolling(20).mean() + close.rolling(20).std() * 2, 2
+                ).iloc[-1],
+                "bollinger_lower": round(
+                    close.rolling(20).mean() - close.rolling(20).std() * 2, 2
+                ).iloc[-1],
+                # Volume Indicators
+                "volume_sma": round(volume.rolling(window=20).mean().iloc[-1], 2),
+                "volume_ratio": round(
+                    volume.iloc[-1] / volume.rolling(window=20).mean().iloc[-1], 2
+                ),
+                # Momentum Indicators
+                "macd": self._calculate_macd(close),
+                "stochastic": self._calculate_stochastic(hist),
+            }
+        except Exception as e:
+            logger.warning(f"Error calculating technical indicators: {str(e)}")
+            return {}
+
+    def _calculate_macd(self, prices: pd.Series) -> Dict:
+        """Calculate MACD indicator"""
+        exp1 = prices.ewm(span=12, adjust=False).mean()
+        exp2 = prices.ewm(span=26, adjust=False).mean()
+        macd = exp1 - exp2
+        signal = macd.ewm(span=9, adjust=False).mean()
+        return {
+            "macd_line": round(macd.iloc[-1], 2),
+            "signal_line": round(signal.iloc[-1], 2),
+            "macd_histogram": round(macd.iloc[-1] - signal.iloc[-1], 2),
+        }
+
+    def _calculate_stochastic(self, hist: pd.DataFrame, period: int = 14) -> Dict:
+        """Calculate Stochastic Oscillator"""
+        high_max = hist["High"].rolling(period).max()
+        low_min = hist["Low"].rolling(period).min()
+        k = 100 * (hist["Close"] - low_min) / (high_max - low_min)
+        d = k.rolling(3).mean()
+        return {"stoch_k": round(k.iloc[-1], 2), "stoch_d": round(d.iloc[-1], 2)}
 
     def generate_analysis_report(self, df: pd.DataFrame) -> str:
         """

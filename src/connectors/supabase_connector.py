@@ -26,6 +26,238 @@ class SupabaseConnector:
             return None
         return obj
 
+    def save_sentiment_analysis(self, sentiment_data: pd.DataFrame) -> Dict:
+        """Save enhanced sentiment analysis results to Supabase"""
+        try:
+            if sentiment_data.empty:
+                return {"success": False, "error": "Empty DataFrame provided"}
+
+            analysis_records = []
+            for _, record in sentiment_data.iterrows():
+                analysis_record = {
+                    # Timestamps
+                    "analysis_timestamp": self._convert_to_json_serializable(
+                        record["analysis_timestamp"]
+                    ),
+                    "data_start_date": self._convert_to_json_serializable(
+                        record["data_start_date"]
+                    ),
+                    "data_end_date": self._convert_to_json_serializable(
+                        record["data_end_date"]
+                    ),
+                    # Basic info
+                    "ticker": str(record["ticker"]),
+                    # Reddit metrics
+                    "score": self._convert_to_json_serializable(record.get("score")),
+                    "num_comments": self._convert_to_json_serializable(
+                        record.get("num_comments")
+                    ),
+                    # Sentiment metrics
+                    "comment_sentiment_avg": self._convert_to_json_serializable(
+                        record.get("comment_sentiment_avg")
+                    ),
+                    "base_sentiment": self._convert_to_json_serializable(
+                        record.get("base_sentiment")
+                    ),
+                    "submission_sentiment": self._convert_to_json_serializable(
+                        record.get("submission_sentiment")
+                    ),
+                    "bullish_comments_ratio": self._convert_to_json_serializable(
+                        record.get("bullish_comments_ratio")
+                    ),
+                    "bearish_comments_ratio": self._convert_to_json_serializable(
+                        record.get("bearish_comments_ratio")
+                    ),
+                    "sentiment_confidence": self._convert_to_json_serializable(
+                        record.get("sentiment_confidence")
+                    ),
+                    # Price metrics
+                    "current_price": self._convert_to_json_serializable(
+                        record.get("current_price")
+                    ),
+                    "price_change_2w": self._convert_to_json_serializable(
+                        record.get("price_change_2w")
+                    ),
+                    "price_change_2d": self._convert_to_json_serializable(
+                        record.get("price_change_2d")
+                    ),
+                    # Volume metrics
+                    "avg_volume": self._convert_to_json_serializable(
+                        record.get("avg_volume")
+                    ),
+                    "volume_change": self._convert_to_json_serializable(
+                        record.get("volume_change")
+                    ),
+                    "volume_sma": self._convert_to_json_serializable(
+                        record.get("volume_sma")
+                    ),
+                    "volume_ratio": self._convert_to_json_serializable(
+                        record.get("volume_ratio")
+                    ),
+                    # Technical indicators
+                    "sma_20": self._convert_to_json_serializable(record.get("sma_20")),
+                    "ema_9": self._convert_to_json_serializable(record.get("ema_9")),
+                    "rsi": self._convert_to_json_serializable(record.get("rsi")),
+                    "volatility": self._convert_to_json_serializable(
+                        record.get("volatility")
+                    ),
+                    "bollinger_upper": self._convert_to_json_serializable(
+                        record.get("bollinger_upper")
+                    ),
+                    "bollinger_lower": self._convert_to_json_serializable(
+                        record.get("bollinger_lower")
+                    ),
+                    "macd_line": self._convert_to_json_serializable(
+                        record.get("macd_line")
+                    ),
+                    "signal_line": self._convert_to_json_serializable(
+                        record.get("signal_line")
+                    ),
+                    "macd_histogram": self._convert_to_json_serializable(
+                        record.get("macd_histogram")
+                    ),
+                    "stoch_k": self._convert_to_json_serializable(
+                        record.get("stoch_k")
+                    ),
+                    "stoch_d": self._convert_to_json_serializable(
+                        record.get("stoch_d")
+                    ),
+                    # Fundamental metrics
+                    "market_cap": self._convert_to_json_serializable(
+                        record.get("market_cap")
+                    ),
+                    "pe_ratio": self._convert_to_json_serializable(
+                        record.get("pe_ratio")
+                    ),
+                    "beta": self._convert_to_json_serializable(record.get("beta")),
+                    "dividend_yield": self._convert_to_json_serializable(
+                        record.get("dividend_yield")
+                    ),
+                    "profit_margins": self._convert_to_json_serializable(
+                        record.get("profit_margins")
+                    ),
+                    "revenue_growth": self._convert_to_json_serializable(
+                        record.get("revenue_growth")
+                    ),
+                    # Market metrics
+                    "target_price": self._convert_to_json_serializable(
+                        record.get("target_price")
+                    ),
+                    "analyst_count": self._convert_to_json_serializable(
+                        record.get("analyst_count")
+                    ),
+                    "short_ratio": self._convert_to_json_serializable(
+                        record.get("short_ratio")
+                    ),
+                    "relative_volume": self._convert_to_json_serializable(
+                        record.get("relative_volume")
+                    ),
+                    "recommendation": record.get("recommendation"),
+                    # Composite scores
+                    "composite_score": self._convert_to_json_serializable(
+                        record.get("composite_score")
+                    ),
+                    "technical_score": self._convert_to_json_serializable(
+                        record.get("technical_score")
+                    ),
+                    "sentiment_score": self._convert_to_json_serializable(
+                        record.get("sentiment_score")
+                    ),
+                    "fundamental_score": self._convert_to_json_serializable(
+                        record.get("fundamental_score")
+                    ),
+                }
+                analysis_records.append(analysis_record)
+
+            # Insert records in batches
+            batch_size = 100
+            success_count = 0
+            for i in range(0, len(analysis_records), batch_size):
+                batch = analysis_records[i : i + batch_size]
+                try:
+                    self.supabase.table("sentiment_analysis").upsert(
+                        batch, on_conflict="ticker,analysis_timestamp"
+                    ).execute()
+                    success_count += len(batch)
+                except Exception as e:
+                    logger.error(f"Error saving batch {i//batch_size + 1}: {str(e)}")
+
+            return {
+                "success": True,
+                "records_processed": len(analysis_records),
+                "records_saved": success_count,
+                "timestamp": dt.datetime.now().isoformat(),
+            }
+
+        except Exception as e:
+            logger.error(f"Error saving sentiment analysis to Supabase: {str(e)}")
+            return {"success": False, "error": str(e)}
+
+    def get_sentiment_trends(
+        self,
+        ticker: str,
+        days: int = 30,
+        include_technicals: bool = True,
+        include_fundamentals: bool = True,
+    ) -> pd.DataFrame:
+        """Get enhanced sentiment trends for a specific ticker"""
+        try:
+            cutoff_date = (dt.datetime.now() - dt.timedelta(days=days)).isoformat()
+
+            # Build select statement based on requirements
+            select_columns = [
+                "analysis_timestamp",
+                "ticker",
+                "comment_sentiment_avg",
+                "bullish_comments_ratio",
+                "bearish_comments_ratio",
+                "sentiment_confidence",
+                "price_change_2d",
+                "price_change_2w",
+                "volume_change",
+                "composite_score",
+            ]
+
+            if include_technicals:
+                select_columns.extend(
+                    [
+                        "rsi",
+                        "macd_line",
+                        "signal_line",
+                        "stoch_k",
+                        "stoch_d",
+                        "volatility",
+                        "technical_score",
+                    ]
+                )
+
+            if include_fundamentals:
+                select_columns.extend(
+                    [
+                        "market_cap",
+                        "pe_ratio",
+                        "beta",
+                        "target_price",
+                        "recommendation",
+                        "fundamental_score",
+                    ]
+                )
+
+            result = (
+                self.supabase.table("sentiment_analysis")
+                .select(",".join(select_columns))
+                .eq("ticker", ticker)
+                .gte("analysis_timestamp", cutoff_date)
+                .order("analysis_timestamp", desc=True)
+                .execute()
+            )
+
+            return pd.DataFrame(result.data)
+
+        except Exception as e:
+            logger.error(f"Error retrieving sentiment trends for {ticker}: {str(e)}")
+            return pd.DataFrame()
+
     def save_post_data(self, post_data: Dict) -> Dict:
         """Save post data to Supabase tables"""
         try:
@@ -137,84 +369,6 @@ class SupabaseConnector:
             logger.error(f"Error saving post to Supabase: {str(e)}")
             return {"success": False, "error": str(e)}
 
-    def save_sentiment_analysis(self, sentiment_data: pd.DataFrame) -> Dict:
-        """Save sentiment analysis results to Supabase"""
-        try:
-            if sentiment_data.empty:
-                return {"success": False, "error": "Empty DataFrame provided"}
-
-            analysis_records = []
-            for _, record in sentiment_data.iterrows():
-                analysis_record = {
-                    "analysis_timestamp": self._convert_to_json_serializable(
-                        record["analysis_timestamp"]
-                    ),
-                    "data_start_date": self._convert_to_json_serializable(
-                        record["data_start_date"]
-                    ),
-                    "data_end_date": self._convert_to_json_serializable(
-                        record["data_end_date"]
-                    ),
-                    "ticker": str(record["ticker"]),
-                    "score": self._convert_to_json_serializable(record.get("score")),
-                    "num_comments": self._convert_to_json_serializable(
-                        record.get("num_comments")
-                    ),
-                    "comment_sentiment_avg": self._convert_to_json_serializable(
-                        record.get("comment_sentiment_avg")
-                    ),
-                    "bullish_comments_ratio": self._convert_to_json_serializable(
-                        record.get("bullish_comments_ratio")
-                    ),
-                    "bearish_comments_ratio": self._convert_to_json_serializable(
-                        record.get("bearish_comments_ratio")
-                    ),
-                    "current_price": self._convert_to_json_serializable(
-                        record.get("current_price")
-                    ),
-                    "price_change_2w": self._convert_to_json_serializable(
-                        record.get("price_change_2w")
-                    ),
-                    "price_change_2d": self._convert_to_json_serializable(
-                        record.get("price_change_2d")
-                    ),
-                    "avg_volume": self._convert_to_json_serializable(
-                        record.get("avg_volume")
-                    ),
-                    "volume_change": self._convert_to_json_serializable(
-                        record.get("volume_change")
-                    ),
-                    "sma_20": self._convert_to_json_serializable(record.get("sma_20")),
-                    "rsi": self._convert_to_json_serializable(record.get("rsi")),
-                    "volatility": self._convert_to_json_serializable(
-                        record.get("volatility")
-                    ),
-                    "market_cap": self._convert_to_json_serializable(
-                        record.get("market_cap")
-                    ),
-                    "pe_ratio": self._convert_to_json_serializable(
-                        record.get("pe_ratio")
-                    ),
-                    "composite_score": self._convert_to_json_serializable(
-                        record.get("composite_score")
-                    ),
-                }
-                analysis_records.append(analysis_record)
-
-            # Insert records in batches
-            batch_size = 100
-            for i in range(0, len(analysis_records), batch_size):
-                batch = analysis_records[i : i + batch_size]
-                self.supabase.table("sentiment_analysis").upsert(
-                    batch, on_conflict="ticker,analysis_timestamp"
-                ).execute()
-
-            return {"success": True, "records_processed": len(analysis_records)}
-
-        except Exception as e:
-            logger.error(f"Error saving sentiment analysis to Supabase: {str(e)}")
-            return {"success": False, "error": str(e)}
-
     def get_recent_posts_by_ticker(
         self, ticker: str, days: int = 7, limit: int = 100
     ) -> List[Dict]:
@@ -237,23 +391,3 @@ class SupabaseConnector:
         except Exception as e:
             logger.error(f"Error retrieving posts for {ticker}: {str(e)}")
             return []
-
-    def get_sentiment_trends(self, ticker: str, days: int = 30) -> pd.DataFrame:
-        """Get sentiment trends for a specific ticker"""
-        try:
-            cutoff_date = (dt.datetime.now() - dt.timedelta(days=days)).isoformat()
-
-            result = (
-                self.supabase.table("sentiment_analysis")
-                .select("*")
-                .eq("ticker", ticker)
-                .gte("analysis_timestamp", cutoff_date)
-                .order("analysis_timestamp", desc=True)
-                .execute()
-            )
-
-            return pd.DataFrame(result.data)
-
-        except Exception as e:
-            logger.error(f"Error retrieving sentiment trends for {ticker}: {str(e)}")
-            return pd.DataFrame()
