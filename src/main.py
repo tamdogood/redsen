@@ -1,18 +1,9 @@
-import praw
-import nltk
 import pandas as pd
 import numpy as np
 import datetime as dt
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
-import yfinance as yf
-from collections import Counter
-import re
-from concurrent.futures import ThreadPoolExecutor
 import logging
 import os
-from typing import Dict, List, Optional
 from dotenv import load_dotenv
-from supabase import create_client, Client
 
 from analyzers.sentiment_analyzer import EnhancedStockAnalyzer
 
@@ -60,45 +51,90 @@ def main():
         logger.error("No data collected from any subreddit")
         return
 
+    # Add timestamps before aggregation
+
+    for df in final_results:
+        df["analysis_timestamp"] = dt.datetime.now()
+        df["data_start_date"] = dt.datetime.now() - dt.timedelta(days=30)
+        df["data_end_date"] = dt.datetime.now()
+
+    # Combine and aggregate results
     combined_results = (
         pd.concat(final_results)
         .groupby("ticker")
         .agg(
             {
+                # Reddit metrics
                 "score": "mean",
                 "num_comments": "sum",
+                # Sentiment metrics
                 "comment_sentiment_avg": "mean",
+                "base_sentiment": "mean",  # If available
+                "submission_sentiment": "mean",  # If available
                 "bullish_comments_ratio": "mean",
                 "bearish_comments_ratio": "mean",
+                # Price metrics
                 "current_price": "first",
                 "price_change_2w": "first",
                 "price_change_2d": "first",
                 "avg_volume": "first",
                 "volume_change": "first",
+                # Technical indicators
                 "sma_20": "first",
                 "rsi": "first",
                 "volatility": "first",
+                # Fundamental metrics
                 "market_cap": "first",
                 "pe_ratio": "first",
+                # Timestamps
+                "analysis_timestamp": "first",
+                "data_start_date": "first",
+                "data_end_date": "first",
             }
         )
         .reset_index()
     )
 
-    # Sort by a composite score of sentiment and popularity
+    # Calculate enhanced composite score
     combined_results["composite_score"] = (
-        combined_results["num_comments"].rank(pct=True) * 0.4
-        + combined_results["comment_sentiment_avg"].rank(pct=True) * 0.3
-        + combined_results["volume_change"].rank(pct=True) * 0.3
+        combined_results["num_comments"].rank(pct=True) * 0.3  # Popularity
+        + combined_results["comment_sentiment_avg"].rank(pct=True) * 0.2  # Sentiment
+        + combined_results["volume_change"].rank(pct=True) * 0.2  # Volume activity
+        + combined_results["price_change_2d"].rank(pct=True)
+        * 0.15  # Recent price movement
+        + combined_results["price_change_2w"].rank(pct=True)
+        * 0.15  # Longer-term price movement
     )
 
+    # Get top stocks
     top_stocks = combined_results.sort_values("composite_score", ascending=False).head(
         50
     )
 
-    # Save results and generate report
+    # Clean up any NaN values before saving
+    top_stocks = top_stocks.replace([np.inf, -np.inf], np.nan)
+    top_stocks = top_stocks.fillna(
+        {
+            "score": 0,
+            "num_comments": 0,
+            "comment_sentiment_avg": 0,
+            "bullish_comments_ratio": 0,
+            "bearish_comments_ratio": 0,
+            "volume_change": 0,
+            "composite_score": 0,
+        }
+    )
+
+    # Save results
     analyzer.save_results(top_stocks)
     analyzer.db.save_sentiment_analysis(top_stocks)
+
+    # Log summary
+    logger.info(f"Processed {len(combined_results)} unique tickers")
+    logger.info(f"Top ticker by sentiment: {top_stocks.iloc[0]['ticker']}")
+    logger.info(
+        f"Top ticker composite score: {top_stocks.iloc[0]['composite_score']:.2f}"
+    )
 
 
 if __name__ == "__main__":
