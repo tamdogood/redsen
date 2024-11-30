@@ -1,22 +1,22 @@
 Stock Analysis Report
 ===================
-Analysis Generated: 2024-11-30 11:56:23
+Analysis Generated: 2024-11-30 12:25:39
 Data Period: 2024-10-31 to 2024-11-30
 ===================
 
 Most Discussed Stocks:
-- REAL: 2604 comments
-- NVDA: 1875 comments
-- S: 926 comments
+- REAL: 2609 comments
+- NVDA: 1766 comments
+- S: 930 comments
 - AI: 789 comments
-- AMD: 531 comments
+- X: 452 comments
 
 Most Positive Sentiment:
-- VIORF: 0.46
-- E: 0.35
-- BGM: 0.29
-- DRUG: 0.29
-- SOFI: 0.26
+- VIORF: 0.49
+- E: 0.39
+- BGM: 0.36
+- DRUG: 0.36
+- SOFI: 0.32
 
 Top Price Gainers (2 weeks):
 - QUBT: 127.74% (Current: $7.06)
@@ -31,16 +31,15 @@ Technical Signals:
 - RGTI: Potentially overbought (RSI: 72.00)
 - QBTS: Potentially overbought (RSI: 74.32)
 - MU: Potentially oversold (RSI: 27.11)
+- RKLB: Potentially overbought (RSI: 89.14)
 - LUNR: Potentially overbought (RSI: 71.40)
 - EDIT: Potentially oversold (RSI: 19.86)
 - SOFI: Potentially overbought (RSI: 82.44)
 - IONQ: Potentially overbought (RSI: 70.51)
 - GO: Potentially overbought (RSI: 74.02)
-- RKLB: Potentially overbought (RSI: 89.14)
 - QUBT: Potentially overbought (RSI: 73.76)
 - HOOD: Potentially overbought (RSI: 74.58)
 - EVTL: Potentially overbought (RSI: 78.98)
 - IT: Potentially oversold (RSI: 20.78)
 - LMT: Potentially oversold (RSI: 29.48)
 - BBWI: Potentially overbought (RSI: 81.31)
-- NOC: Potentially oversold (RSI: 23.38)

@@ -33,6 +33,9 @@ class SupabaseConnector:
                 "created_at": post_data["created_utc"].isoformat(),
                 "subreddit": post_data["subreddit"],
                 "avg_sentiment": post_data["avg_sentiment"],
+                "submission_sentiment": post_data["submission_sentiment"],
+                "avg_base_sentiment": post_data["avg_base_sentiment"],
+                "avg_weighted_sentiment": post_data["avg_weighted_sentiment"],
             }
 
             # Insert into posts table

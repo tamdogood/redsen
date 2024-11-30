@@ -38,15 +38,15 @@ def main():
     subreddits_to_analyze = [
         "wallstreetbets",
         "stocks",
-        "investing",
-        "stockmarket",
-        "BullTrader",
-        "robinhood",
-        "Superstonk",
-        "ValueInvesting",
-        "Wallstreetbetsnew",
-        "stonks",
-        "scottsstocks",
+        # "investing",
+        # "stockmarket",
+        # "BullTrader",
+        # "robinhood",
+        # "Superstonk",
+        # "ValueInvesting",
+        # "Wallstreetbetsnew",
+        # "stonks",
+        # "scottsstocks",
     ]
     final_results = []
 
@@ -98,7 +98,7 @@ def main():
 
     # Save results and generate report
     analyzer.save_results(top_stocks)
-    analyzer.db.save_sentiment_analysis(top_stocks)
+    # analyzer.db.save_sentiment_analysis(top_stocks)
 
 
 if __name__ == "__main__":

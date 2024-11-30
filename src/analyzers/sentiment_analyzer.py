@@ -400,15 +400,13 @@ class EnhancedStockAnalyzer:
     def _get_reddit_sentiment(
         self, subreddit_name: str, time_filter: str, limit: int
     ) -> pd.DataFrame:
-        """Get Reddit sentiment analysis with enhanced post data collection"""
+        """Get Reddit sentiment analysis with enhanced scoring"""
         subreddit = self.reddit.subreddit(subreddit_name)
         sentiment_data = []
-        post_data = []  # Store full post data for saving
+        post_data = []
 
         try:
-            # Analyze top posts in the specified time filter
             for submission in subreddit.top(time_filter=time_filter, limit=limit):
-                # Extract tickers from submission title and text
                 submission_tickers = self.extract_stock_tickers(
                     submission.title + " " + submission.selftext
                 )
@@ -416,25 +414,39 @@ class EnhancedStockAnalyzer:
                 if not submission_tickers:
                     continue
 
-                # Analyze comment sentiments
-                submission.comments.replace_more(limit=0)  # Flatten comment tree
+                # First analyze submission sentiment
+                submission_sentiment = self._analyze_text_sentiment(
+                    submission.title + " " + submission.selftext
+                )
+
+                # Analyze comments with weighted scoring
+                submission.comments.replace_more(limit=0)
                 comments = submission.comments.list()
 
-                # Collect comment data
                 comment_data = []
                 sentiment_scores = []
-                bullish_count = 0
-                bearish_count = 0
+                weighted_scores = []  # Weight scores by comment score and awards
+                bullish_comments = []
+                bearish_comments = []
 
                 for comment in comments:
                     try:
-                        sentiment = self.sia.polarity_scores(comment.body)
-                        sentiment_scores.append(sentiment["compound"])
+                        # Get base sentiment
+                        comment_sentiment = self._analyze_text_sentiment(comment.body)
+                        base_score = comment_sentiment["compound"]
 
-                        if sentiment["compound"] > 0.1:
-                            bullish_count += 1
-                        elif sentiment["compound"] < -0.1:
-                            bearish_count += 1
+                        # Calculate comment weight based on score and awards
+                        comment_weight = self._calculate_comment_weight(comment)
+
+                        weighted_sentiment = base_score * comment_weight
+                        sentiment_scores.append(base_score)
+                        weighted_scores.append(weighted_sentiment)
+
+                        # Classify comment sentiment
+                        if base_score > 0.1:
+                            bullish_comments.append(weighted_sentiment)
+                        elif base_score < -0.1:
+                            bearish_comments.append(weighted_sentiment)
 
                         comment_data.append(
                             {
@@ -444,17 +456,34 @@ class EnhancedStockAnalyzer:
                                 "created_utc": dt.datetime.fromtimestamp(
                                     comment.created_utc
                                 ),
-                                "sentiment": sentiment["compound"],
+                                "sentiment": comment_sentiment,
+                                "weight": comment_weight,
                             }
                         )
-                    except:
+                    except Exception as e:
                         continue
 
-                # Calculate averages
-                avg_sentiment = np.mean(sentiment_scores) if sentiment_scores else 0
-                total_classified = bullish_count + bearish_count
+                # Calculate final sentiment metrics
+                avg_base_sentiment = (
+                    np.mean(sentiment_scores) if sentiment_scores else 0
+                )
+                avg_weighted_sentiment = (
+                    np.mean(weighted_scores) if weighted_scores else 0
+                )
 
-                # Store full post data
+                # Calculate bullish/bearish ratios using weighted scores
+                total_bullish = sum(score for score in bullish_comments)
+                total_bearish = abs(sum(score for score in bearish_comments))
+                total_sentiment = total_bullish + total_bearish
+
+                bullish_ratio = (
+                    total_bullish / total_sentiment if total_sentiment > 0 else 0
+                )
+                bearish_ratio = (
+                    total_bearish / total_sentiment if total_sentiment > 0 else 0
+                )
+
+                # Store post data
                 post_info = {
                     "post_id": submission.id,
                     "title": submission.title,
@@ -466,13 +495,15 @@ class EnhancedStockAnalyzer:
                     "upvote_ratio": submission.upvote_ratio,
                     "created_utc": dt.datetime.fromtimestamp(submission.created_utc),
                     "tickers": submission_tickers,
-                    "avg_sentiment": avg_sentiment,
+                    "submission_sentiment": submission_sentiment,
+                    "avg_base_sentiment": avg_base_sentiment,
+                    "avg_weighted_sentiment": avg_weighted_sentiment,
                     "comments": comment_data,
                     "subreddit": subreddit_name,
                 }
                 post_data.append(post_info)
 
-                # Add sentiment data for analysis
+                # Add sentiment data for each ticker
                 for ticker in submission_tickers:
                     sentiment_data.append(
                         {
@@ -481,41 +512,116 @@ class EnhancedStockAnalyzer:
                             "score": submission.score,
                             "num_comments": submission.num_comments,
                             "upvote_ratio": submission.upvote_ratio,
-                            "comment_sentiment_avg": avg_sentiment,
-                            "bullish_comments_ratio": (
-                                bullish_count / total_classified
-                                if total_classified > 0
-                                else 0
-                            ),
-                            "bearish_comments_ratio": (
-                                bearish_count / total_classified
-                                if total_classified > 0
-                                else 0
-                            ),
+                            "comment_sentiment_avg": avg_weighted_sentiment,
+                            "base_sentiment": avg_base_sentiment,
+                            "submission_sentiment": submission_sentiment["compound"],
+                            "bullish_comments_ratio": bullish_ratio,
+                            "bearish_comments_ratio": bearish_ratio,
+                            "sentiment_confidence": len(
+                                sentiment_scores
+                            ),  # Number of analyzed comments
                             "timestamp": dt.datetime.fromtimestamp(
                                 submission.created_utc
                             ),
-                            "post_id": submission.id,  # Add post_id for reference
+                            "post_id": submission.id,
                         }
                     )
-
-            # Save full post data
-            # self.save_detailed_post_data(post_data, subreddit_name)
 
             # Save to Supabase
             for post in post_data:
                 self.db.save_post_data(post)
-
-            # # Save sentiment analysis
-            # sentiment_df = pd.DataFrame(sentiment_data)
-            # if not sentiment_df.empty:
-            #     self.db.save_sentiment_analysis(sentiment_df)
 
             return pd.DataFrame(sentiment_data)
 
         except Exception as e:
             logger.error(f"Error analyzing subreddit {subreddit_name}: {str(e)}")
             return pd.DataFrame()
+
+    def _analyze_text_sentiment(self, text: str) -> Dict[str, float]:
+        """
+        Enhanced sentiment analysis for text
+
+        Args:
+            text: Text to analyze
+
+        Returns:
+            Dict containing sentiment scores and metadata
+        """
+        # Get base VADER sentiment
+        vader_scores = self.sia.polarity_scores(text)
+
+        # Additional sentiment features
+        sentiment_features = {
+            "has_exclamation": "!" in text,
+            "has_dollar_sign": "$" in text,
+            "has_rocket": "🚀" in text or "rocket" in text.lower(),
+            "has_moon": "🌙" in text.lower() or "moon" in text.lower(),
+            "has_buy_terms": any(
+                term in text.lower() for term in ["buy", "long", "bull", "calls"]
+            ),
+            "has_sell_terms": any(
+                term in text.lower() for term in ["sell", "short", "bear", "puts"]
+            ),
+        }
+
+        # Adjust compound score based on additional features
+        compound_adjustment = 0
+        if sentiment_features["has_exclamation"]:
+            compound_adjustment += 0.1
+        if sentiment_features["has_dollar_sign"]:
+            compound_adjustment += 0.05
+        if sentiment_features["has_rocket"] or sentiment_features["has_moon"]:
+            compound_adjustment += 0.15
+        if sentiment_features["has_buy_terms"]:
+            compound_adjustment += 0.1
+        if sentiment_features["has_sell_terms"]:
+            compound_adjustment -= 0.1
+
+        # Ensure final compound score stays within [-1, 1]
+        adjusted_compound = max(
+            min(vader_scores["compound"] + compound_adjustment, 1), -1
+        )
+
+        return {
+            "compound": adjusted_compound,
+            "pos": vader_scores["pos"],
+            "neg": vader_scores["neg"],
+            "neu": vader_scores["neu"],
+            "features": sentiment_features,
+        }
+
+    def _calculate_comment_weight(self, comment) -> float:
+        """
+        Calculate weight for a comment based on various factors
+
+        Args:
+            comment: Reddit comment object
+
+        Returns:
+            float: Weight between 0 and 2
+        """
+        # Base weight from comment score
+        if comment.score <= 0:
+            score_weight = 0.5
+        else:
+            score_weight = min(1 + np.log1p(comment.score) / 10, 1.5)
+
+        # Account for comment awards
+        try:
+            awards_count = (
+                len(comment.all_awardings) if hasattr(comment, "all_awardings") else 0
+            )
+            awards_weight = min(1 + (awards_count * 0.1), 1.5)
+        except:
+            awards_weight = 1.0
+
+        # Account for comment length (longer comments might be more substantive)
+        length_weight = min(1 + (len(comment.body) / 1000), 1.2)
+
+        # Calculate final weight
+        final_weight = score_weight * 0.5 + awards_weight * 0.3 + length_weight * 0.2
+
+        return min(max(final_weight, 0.5), 2.0)  # Ensure weight is between 0.5 and 2
 
     def generate_analysis_report(self, df: pd.DataFrame) -> str:
         """
@@ -579,27 +685,180 @@ class EnhancedStockAnalyzer:
         return "\n".join(report)
 
     def save_results(self, df: pd.DataFrame, filename: str = "stock_analysis.csv"):
-        """Save results with additional metrics and timestamps"""
-        if not df.empty:
-            # Add analysis timestamp to DataFrame
-            df["analysis_timestamp"] = dt.datetime.now()
-            df["data_start_date"] = dt.datetime.now() - dt.timedelta(days=30)
-            df["data_end_date"] = dt.datetime.now()
+        """
+        Save results with enhanced metrics and detailed sentiment analysis
 
-            # Reorder columns to put timestamps at the beginning
-            timestamp_cols = ["analysis_timestamp", "data_start_date", "data_end_date"]
-            other_cols = [col for col in df.columns if col not in timestamp_cols]
-            df = df[timestamp_cols + other_cols]
+        Args:
+            df (pd.DataFrame): Analysis results DataFrame
+            filename (str): Base filename for saving results
+        """
+        if df.empty:
+            logger.warning("No results to save")
+            return
 
-            # Save to CSV
-            df.to_csv(filename, index=False)
+        def convert_to_json_serializable(obj):
+            """Helper function to convert values to JSON serializable types"""
+            if isinstance(obj, (np.int64, np.int32)):
+                return int(obj)
+            elif isinstance(obj, (np.float64, np.float32)):
+                return float(obj)
+            elif isinstance(obj, (dt.datetime, pd.Timestamp)):
+                return obj.isoformat()
+            elif isinstance(obj, np.bool_):
+                return bool(obj)
+            elif pd.isna(obj):
+                return None
+            return obj
 
-            # Generate and save report
-            report = self.generate_analysis_report(df)
-            report_filename = filename.replace(".csv", "_report.txt")
-            with open(report_filename, "w") as f:
+        def safe_get(row, key, default=None):
+            """Safely get a value from a row, with default if missing"""
+            try:
+                return convert_to_json_serializable(row.get(key, default))
+            except:
+                return default
+
+        try:
+            # Create a timestamp for this analysis
+            current_time = dt.datetime.now()
+
+            # Add timing information
+            df["analysis_timestamp"] = current_time
+            df["data_start_date"] = current_time - dt.timedelta(days=30)
+            df["data_end_date"] = current_time
+
+            # Create results directory with timestamp
+            timestamp_str = current_time.strftime("%Y%m%d_%H%M%S")
+            results_dir = f"analysis_results/{timestamp_str}"
+            os.makedirs(results_dir, exist_ok=True)
+
+            # Prepare main analysis DataFrame
+            analysis_df = df.copy()
+
+            # Save main analysis CSV
+            csv_path = f"{results_dir}/{filename}"
+            analysis_df.to_csv(csv_path, index=False)
+
+            # Generate and save detailed report
+            report = self.generate_analysis_report(analysis_df)
+            report_path = f"{results_dir}/analysis_report.txt"
+            with open(report_path, "w") as f:
                 f.write(report)
 
-            logger.info(f"Results saved to {filename} and {report_filename}")
-        else:
-            logger.warning("No results to save")
+            # Save detailed sentiment data in JSON format
+            sentiment_data = {
+                "analysis_timestamp": current_time.isoformat(),
+                "metadata": {
+                    "total_stocks_analyzed": int(len(df)),
+                    "average_sentiment": (
+                        float(df["comment_sentiment_avg"].mean())
+                        if "comment_sentiment_avg" in df.columns
+                        else 0.0
+                    ),
+                    "total_comments_analyzed": (
+                        int(df["num_comments"].sum())
+                        if "num_comments" in df.columns
+                        else 0
+                    ),
+                },
+                "stocks": [],
+            }
+
+            for _, row in df.iterrows():
+                stock_data = {
+                    "ticker": str(row["ticker"]),
+                    "sentiment_metrics": {
+                        "comment_sentiment_avg": safe_get(
+                            row, "comment_sentiment_avg", 0.0
+                        ),
+                        "bullish_ratio": safe_get(row, "bullish_comments_ratio", 0.0),
+                        "bearish_ratio": safe_get(row, "bearish_comments_ratio", 0.0),
+                    },
+                    "price_metrics": {
+                        "current_price": safe_get(row, "current_price"),
+                        "price_change_2w": safe_get(row, "price_change_2w"),
+                        "price_change_2d": safe_get(row, "price_change_2d"),
+                        "volume_change": safe_get(row, "volume_change"),
+                        "technical_indicators": {
+                            "sma_20": safe_get(row, "sma_20"),
+                            "rsi": safe_get(row, "rsi"),
+                            "volatility": safe_get(row, "volatility"),
+                        },
+                    },
+                    "fundamental_metrics": {
+                        "market_cap": safe_get(row, "market_cap"),
+                        "pe_ratio": safe_get(row, "pe_ratio"),
+                    },
+                    "reddit_metrics": {
+                        "score": safe_get(row, "score", 0),
+                        "num_comments": safe_get(row, "num_comments", 0),
+                        "composite_score": safe_get(row, "composite_score", 0.0),
+                    },
+                }
+                sentiment_data["stocks"].append(stock_data)
+
+            # Save detailed JSON
+            json_path = f"{results_dir}/detailed_analysis.json"
+            with open(json_path, "w") as f:
+                json.dump(sentiment_data, f, indent=2)
+
+            # Save summary of extremes with converted values
+            summary_data = {
+                "most_bullish": [
+                    {
+                        "ticker": str(r["ticker"]),
+                        "sentiment": safe_get(r, "comment_sentiment_avg", 0.0),
+                    }
+                    for _, r in df.nlargest(5, "comment_sentiment_avg")[
+                        ["ticker", "comment_sentiment_avg"]
+                    ].iterrows()
+                ],
+                "most_bearish": [
+                    {
+                        "ticker": str(r["ticker"]),
+                        "sentiment": safe_get(r, "comment_sentiment_avg", 0.0),
+                    }
+                    for _, r in df.nsmallest(5, "comment_sentiment_avg")[
+                        ["ticker", "comment_sentiment_avg"]
+                    ].iterrows()
+                ],
+                "most_discussed": [
+                    {"ticker": str(r["ticker"]), "comments": int(r["num_comments"])}
+                    for _, r in df.nlargest(5, "num_comments")[
+                        ["ticker", "num_comments"]
+                    ].iterrows()
+                ],
+                "best_performing": [
+                    {
+                        "ticker": str(r["ticker"]),
+                        "price_change": safe_get(r, "price_change_2w", 0.0),
+                    }
+                    for _, r in df.nlargest(5, "price_change_2w")[
+                        ["ticker", "price_change_2w"]
+                    ].iterrows()
+                ],
+                "worst_performing": [
+                    {
+                        "ticker": str(r["ticker"]),
+                        "price_change": safe_get(r, "price_change_2w", 0.0),
+                    }
+                    for _, r in df.nsmallest(5, "price_change_2w")[
+                        ["ticker", "price_change_2w"]
+                    ].iterrows()
+                ],
+            }
+
+            summary_path = f"{results_dir}/analysis_summary.json"
+            with open(summary_path, "w") as f:
+                json.dump(summary_data, f, indent=2)
+
+            logger.info(
+                f"Analysis results saved to directory: {results_dir}\n"
+                f"- CSV: {filename}\n"
+                f"- Report: analysis_report.txt\n"
+                f"- Detailed Analysis: detailed_analysis.json\n"
+                f"- Summary: analysis_summary.json"
+            )
+
+        except Exception as e:
+            logger.error(f"Error saving results: {str(e)}")
+            raise  # Re-raise the exception for debugging
