@@ -1,0 +1,29 @@
+Stock Analysis Report
+===================
+Analysis Generated: 2024-11-29 21:03:59
+Data Period: 2024-10-30 to 2024-11-29
+===================
+
+Most Discussed Stocks:
+- M: 5735 comments
+- REAL: 2550 comments
+- X: 1979 comments
+- EV: 1746 comments
+- NVDA: 1625 comments
+
+Most Positive Sentiment:
+- L: 0.24
+- PH: 0.24
+- REAL: 0.23
+- AI: 0.22
+- DNN: 0.22
+
+Top Price Gainers (2 weeks):
+- REAL: 47.37% (Current: $5.88)
+- AI: 43.06% (Current: $37.18)
+- ML: 16.12% (Current: $91.7)
+
+Technical Signals:
+- REAL: Potentially overbought (RSI: 92.40)
+- AI: Potentially overbought (RSI: 76.40)
+- L: Potentially overbought (RSI: 77.55)
