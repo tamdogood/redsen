@@ -1,29 +1,46 @@
 Stock Analysis Report
 ===================
-Analysis Generated: 2024-11-29 22:49:47
-Data Period: 2024-10-30 to 2024-11-29
+Analysis Generated: 2024-11-30 11:56:23
+Data Period: 2024-10-31 to 2024-11-30
 ===================
 
 Most Discussed Stocks:
-- M: 5757 comments
-- REAL: 2557 comments
-- X: 1979 comments
-- EV: 1746 comments
-- NVDA: 1645 comments
+- REAL: 2604 comments
+- NVDA: 1875 comments
+- S: 926 comments
+- AI: 789 comments
+- AMD: 531 comments
 
 Most Positive Sentiment:
-- L: 0.24
-- PH: 0.24
-- REAL: 0.23
-- DNN: 0.22
-- ML: 0.22
+- VIORF: 0.46
+- E: 0.35
+- BGM: 0.29
+- DRUG: 0.29
+- SOFI: 0.26
 
 Top Price Gainers (2 weeks):
-- REAL: 47.37% (Current: $5.88)
-- AI: 43.06% (Current: $37.18)
-- ML: 16.12% (Current: $91.7)
+- QUBT: 127.74% (Current: $7.06)
+- EVTL: 119.09% (Current: $10.1)
+- RGTI: 116.31% (Current: $3.05)
 
 Technical Signals:
 - REAL: Potentially overbought (RSI: 92.40)
 - AI: Potentially overbought (RSI: 76.40)
-- L: Potentially overbought (RSI: 77.55)
+- KODK: Potentially overbought (RSI: 70.06)
+- BGM: Potentially overbought (RSI: 70.52)
+- RGTI: Potentially overbought (RSI: 72.00)
+- QBTS: Potentially overbought (RSI: 74.32)
+- MU: Potentially oversold (RSI: 27.11)
+- LUNR: Potentially overbought (RSI: 71.40)
+- EDIT: Potentially oversold (RSI: 19.86)
+- SOFI: Potentially overbought (RSI: 82.44)
+- IONQ: Potentially overbought (RSI: 70.51)
+- GO: Potentially overbought (RSI: 74.02)
+- RKLB: Potentially overbought (RSI: 89.14)
+- QUBT: Potentially overbought (RSI: 73.76)
+- HOOD: Potentially overbought (RSI: 74.58)
+- EVTL: Potentially overbought (RSI: 78.98)
+- IT: Potentially oversold (RSI: 20.78)
+- LMT: Potentially oversold (RSI: 29.48)
+- BBWI: Potentially overbought (RSI: 81.31)
+- NOC: Potentially oversold (RSI: 23.38)

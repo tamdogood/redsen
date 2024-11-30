@@ -84,9 +84,20 @@ class EnhancedStockAnalyzer:
             "NFT",
             "NFTs",
             "UK",
+            "US",
             "EUR",
             "EU",
             "JP",
+            "WSJ",
+            "NYT",
+            "STONK",
+            "VR",
+            "IoT",
+            "FAQ",
+            "ASAP",
+            "DIY",
+            "ROI",
+            "KPI",
         }
 
     def is_valid_ticker(self, ticker: str) -> bool:
@@ -126,7 +137,7 @@ class EnhancedStockAnalyzer:
             tickers = self._extract_tickers_with_regex(text)
 
             # If regex fails or returns no tickers, fallback to OpenAI
-            if not tickers:
+            if not tickers and False:
                 tickers = self._extract_tickers_with_openai(text)
 
             # Validate tickers

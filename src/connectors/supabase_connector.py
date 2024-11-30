@@ -131,6 +131,11 @@ class SupabaseConnector:
                         if pd.notnull(record["price_change_2w"])
                         else None
                     ),
+                    "price_change_2d": (
+                        float(record["price_change_2d"])
+                        if pd.notnull(record["price_change_2d"])
+                        else None
+                    ),
                     "avg_volume": (
                         float(record["avg_volume"])
                         if pd.notnull(record["avg_volume"])

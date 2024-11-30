@@ -35,7 +35,19 @@ def main():
         os.getenv("SUPABASE_KEY", ""),
     )
 
-    subreddits_to_analyze = ["wallstreetbets", "stocks", "investing"]
+    subreddits_to_analyze = [
+        "wallstreetbets",
+        "stocks",
+        "investing",
+        "stockmarket",
+        "BullTrader",
+        "robinhood",
+        "Superstonk",
+        "ValueInvesting",
+        "Wallstreetbetsnew",
+        "stonks",
+        "scottsstocks",
+    ]
     final_results = []
 
     for subreddit in subreddits_to_analyze:
