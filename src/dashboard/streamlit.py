@@ -705,15 +705,252 @@ class StockSentimentDashboard:
         if selected_ticker:
             self.show_stock_details(selected_ticker)
 
+    def show_stock_correlation_analysis(self, df: pd.DataFrame, ticker: str):
+        """Show detailed correlation analysis for a specific stock"""
+        st.header(f"Correlation Analysis for {ticker}")
+
+        # Handle NaN values in the data
+        df = df.fillna(method="ffill").fillna(method="bfill")
+
+        # Calculate various correlations with error handling
+        def safe_correlation(x, y):
+            try:
+                return x.corr(y)
+            except:
+                return 0.0
+
+        correlations = {
+            "Sentiment vs Price": {
+                "Same Day": safe_correlation(
+                    df["comment_sentiment_avg"], df["price_change_2w"]
+                ),
+                "Next Day": safe_correlation(
+                    df["comment_sentiment_avg"].shift(1), df["price_change_2w"]
+                ),
+                "Previous Day": safe_correlation(
+                    df["comment_sentiment_avg"].shift(-1), df["price_change_2w"]
+                ),
+            },
+            "Bullish Ratio vs Price": {
+                "Same Day": safe_correlation(
+                    df["bullish_comments_ratio"], df["price_change_2w"]
+                ),
+                "Next Day": safe_correlation(
+                    df["bullish_comments_ratio"].shift(1), df["price_change_2w"]
+                ),
+                "Previous Day": safe_correlation(
+                    df["bullish_comments_ratio"].shift(-1), df["price_change_2w"]
+                ),
+            },
+            "Volume vs Sentiment": {
+                "Same Day": safe_correlation(
+                    df["volume_change"], df["comment_sentiment_avg"]
+                ),
+                "Next Day": safe_correlation(
+                    df["volume_change"].shift(1), df["comment_sentiment_avg"]
+                ),
+                "Previous Day": safe_correlation(
+                    df["volume_change"].shift(-1), df["comment_sentiment_avg"]
+                ),
+            },
+        }
+
+        # Display correlation metrics
+        col1, col2, col3 = st.columns(3)
+
+        def get_correlation_color(value):
+            if pd.isna(value) or value == 0:
+                return "normal"
+            if abs(value) > 0.7:
+                return "strong correlation"
+            elif abs(value) > 0.4:
+                return "moderate correlation"
+            else:
+                return "weak correlation"
+
+        for i, (metric, values) in enumerate(correlations.items()):
+            with [col1, col2, col3][i]:
+                st.subheader(metric)
+                for period, value in values.items():
+                    if pd.notnull(value):
+                        strength = get_correlation_color(value)
+                        st.metric(
+                            period, f"{value:.3f}", delta=strength, delta_color="normal"
+                        )
+                    else:
+                        st.metric(period, "N/A", delta="insufficient data")
+
+        # Add rolling correlation analysis
+        st.subheader("Rolling Correlation Analysis")
+
+        # Only show rolling analysis if we have enough data
+        if len(df) >= 5:
+            window_size = st.slider(
+                "Select Rolling Window Size (days)",
+                min_value=5,
+                max_value=min(30, len(df)),
+                value=min(10, len(df)),
+            )
+
+            # Calculate rolling correlations with error handling
+            try:
+                df["sentiment_price_corr"] = (
+                    df["comment_sentiment_avg"]
+                    .rolling(window=window_size, min_periods=3)
+                    .corr(df["price_change_2w"])
+                )
+
+                df["bullish_price_corr"] = (
+                    df["bullish_comments_ratio"]
+                    .rolling(window=window_size, min_periods=3)
+                    .corr(df["price_change_2w"])
+                )
+
+                # Plot rolling correlations
+                fig = go.Figure()
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=df["analysis_timestamp"],
+                        y=df["sentiment_price_corr"],
+                        name="Sentiment-Price Correlation",
+                        line=dict(color="blue"),
+                    )
+                )
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=df["analysis_timestamp"],
+                        y=df["bullish_price_corr"],
+                        name="Bullish Ratio-Price Correlation",
+                        line=dict(color="green"),
+                    )
+                )
+
+                fig.update_layout(
+                    title=f"{window_size}-Day Rolling Correlation with Price Change",
+                    yaxis_title="Correlation Coefficient",
+                    showlegend=True,
+                )
+
+                fig.add_hline(
+                    y=0.7,
+                    line_dash="dash",
+                    line_color="red",
+                    annotation_text="Strong Positive",
+                )
+                fig.add_hline(
+                    y=-0.7,
+                    line_dash="dash",
+                    line_color="red",
+                    annotation_text="Strong Negative",
+                )
+                fig.add_hline(y=0, line_dash="dash", line_color="gray")
+
+                st.plotly_chart(fig, use_container_width=True)
+
+            except Exception as e:
+                st.warning(
+                    "Could not calculate rolling correlations due to insufficient data"
+                )
+
+            # Add lag analysis
+            st.subheader("Correlation Lag Analysis")
+
+            max_lag = min(5, len(df) // 2)
+            lags = range(-max_lag, max_lag + 1)
+            lag_correlations = []
+
+            for lag in lags:
+                sent_corr = safe_correlation(
+                    df["comment_sentiment_avg"].shift(lag), df["price_change_2w"]
+                )
+                bull_corr = safe_correlation(
+                    df["bullish_comments_ratio"].shift(lag), df["price_change_2w"]
+                )
+
+                lag_correlations.append(
+                    {
+                        "lag": lag,
+                        "Sentiment Correlation": sent_corr,
+                        "Bullish Ratio Correlation": bull_corr,
+                    }
+                )
+
+            lag_df = pd.DataFrame(lag_correlations).fillna(0)
+
+            # Plot lag analysis
+            fig = go.Figure()
+
+            fig.add_trace(
+                go.Scatter(
+                    x=lag_df["lag"],
+                    y=lag_df["Sentiment Correlation"],
+                    name="Sentiment",
+                    mode="lines+markers",
+                )
+            )
+
+            fig.add_trace(
+                go.Scatter(
+                    x=lag_df["lag"],
+                    y=lag_df["Bullish Ratio Correlation"],
+                    name="Bullish Ratio",
+                    mode="lines+markers",
+                )
+            )
+
+            fig.update_layout(
+                title="Correlation by Time Lag",
+                xaxis_title="Lag (Days)",
+                yaxis_title="Correlation Coefficient",
+                showlegend=True,
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Add insights
+            st.subheader("Key Insights")
+
+            # Find strongest correlations safely
+            sent_corr_idx = lag_df["Sentiment Correlation"].abs().idxmax()
+            bull_corr_idx = lag_df["Bullish Ratio Correlation"].abs().idxmax()
+
+            if sent_corr_idx is not None and bull_corr_idx is not None:
+                max_sentiment_corr = lag_df.iloc[sent_corr_idx]
+                max_bullish_corr = lag_df.iloc[bull_corr_idx]
+
+                st.write(
+                    f"""
+                - Strongest sentiment correlation occurs at {int(max_sentiment_corr['lag'])} day(s) 
+                lag with correlation of {max_sentiment_corr['Sentiment Correlation']:.3f}
+                - Strongest bullish ratio correlation occurs at {int(max_bullish_corr['lag'])} day(s) 
+                lag with correlation of {max_bullish_corr['Bullish Ratio Correlation']:.3f}
+                """
+                )
+            else:
+                st.write("Insufficient data to determine strongest correlations")
+
+        else:
+            st.warning(
+                f"Not enough data points for {ticker} to perform correlation analysis. Need at least 5 data points."
+            )
+
     def show_stock_details(self, ticker: str):
-        """Enhanced stock details with more analysis"""
+        """Enhanced stock details with correlation analysis"""
         stock_data = self.get_stock_data(ticker)
         if stock_data.empty:
             st.warning(f"No data available for {ticker}")
             return
 
-        tab1, tab2, tab3, tab4 = st.tabs(
-            ["Overview", "Technical Analysis", "Social Sentiment", "Advanced Metrics"]
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(
+            [
+                "Overview",
+                "Technical Analysis",
+                "Social Sentiment",
+                "Correlation Analysis",
+                "Advanced Metrics",
+            ]
         )
 
         with tab1:
@@ -726,6 +963,9 @@ class StockSentimentDashboard:
             self.show_sentiment_tab(stock_data, ticker)
 
         with tab4:
+            self.show_stock_correlation_analysis(stock_data, ticker)
+
+        with tab5:
             self.show_advanced_metrics_tab(stock_data, ticker)
 
 
