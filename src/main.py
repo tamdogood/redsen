@@ -45,7 +45,10 @@ def main():
 
     for subreddit in subreddits_to_analyze:
         logger.info(f"Analyzing {subreddit}...")
-        results = analyzer.analyze_subreddit_sentiment(subreddit)
+        results = analyzer.analyze_subreddit_sentiment(
+            subreddit,
+            limit=os.getenv("REDDIT_TOP_POST_LIMIT", ""),
+        )
         if not results.empty:
             final_results.append(results)
 
