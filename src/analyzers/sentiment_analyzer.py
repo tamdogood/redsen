@@ -142,7 +142,7 @@ class EnhancedStockAnalyzer:
             tickers = self._extract_tickers_with_regex(text)
 
             # If regex fails or returns no tickers, fallback to OpenAI
-            if not tickers and False:
+            if not tickers:
                 tickers = self._extract_tickers_with_openai(text)
 
             # Validate tickers
