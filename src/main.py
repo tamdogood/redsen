@@ -29,17 +29,17 @@ def main():
     )
 
     subreddits_to_analyze = [
-        # "wallstreetbets",
+        "wallstreetbets",
         "stocks",
-        # "investing",
-        # "stockmarket",
-        # "BullTrader",
-        # "robinhood",
-        # "Superstonk",
-        # "ValueInvesting",
-        # "Wallstreetbetsnew",
-        # "stonks",
-        # "scottsstocks",
+        "investing",
+        "stockmarket",
+        "BullTrader",
+        "robinhood",
+        "Superstonk",
+        "ValueInvesting",
+        "Wallstreetbetsnew",
+        "stonks",
+        "scottsstocks",
     ]
     final_results = []
 
@@ -47,7 +47,7 @@ def main():
         logger.info(f"Analyzing {subreddit}...")
         results = analyzer.analyze_subreddit_sentiment(
             subreddit,
-            limit=os.getenv("REDDIT_TOP_POST_LIMIT", ""),
+            limit=int(os.getenv("REDDIT_TOP_POST_LIMIT", 20)),
         )
         if not results.empty:
             final_results.append(results)

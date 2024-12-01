@@ -1,6 +1,6 @@
 import io
 from supabase import create_client, Client
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 import pandas as pd
 from utils.logging_config import logger
 import datetime as dt

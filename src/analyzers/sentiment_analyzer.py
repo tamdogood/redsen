@@ -519,7 +519,7 @@ class EnhancedStockAnalyzer:
             return {}
 
     def analyze_subreddit_sentiment(
-        self, subreddit_name: str, time_filter: str = "week", limit: int = 2
+        self, subreddit_name: str, time_filter: str = "day", limit: int = 2
     ) -> pd.DataFrame:
         """Analyze subreddit with improved error handling and save posts by ticker"""
         sentiment_data = self._get_reddit_sentiment(subreddit_name, time_filter, limit)
@@ -587,7 +587,6 @@ class EnhancedStockAnalyzer:
                 submission_tickers = self.extract_stock_tickers(
                     submission.title + " " + submission.selftext
                 )
-
                 if not submission_tickers:
                     continue
 
@@ -595,7 +594,6 @@ class EnhancedStockAnalyzer:
                 submission_sentiment = self._analyze_text_sentiment(
                     submission.title + " " + submission.selftext
                 )
-
                 # Analyze comments with weighted scoring
                 submission.comments.replace_more(
                     limit=int(os.getenv("REDDIT_COMMENT_LIMIT", 10))
