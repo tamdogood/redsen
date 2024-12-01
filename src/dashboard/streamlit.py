@@ -485,21 +485,210 @@ class StockSentimentDashboard:
         for signal in signals:
             st.write(f"**{signal['ticker']}**: {', '.join(signal['signals'])}")
 
+    def add_sentiment_price_analysis(self, df: pd.DataFrame):
+        """Add analysis of sentiment vs price relationships"""
+        st.header("Sentiment vs Price Analysis")
+
+        # Create bins for sentiment scores
+        df["sentiment_category"] = pd.qcut(
+            df["comment_sentiment_avg"],
+            q=5,
+            labels=["Very Bearish", "Bearish", "Neutral", "Bullish", "Very Bullish"],
+        )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # Average price change by sentiment category
+            avg_price_change = (
+                df.groupby("sentiment_category")["price_change_2w"].mean().round(2)
+            )
+            fig = px.bar(
+                avg_price_change,
+                title="Average Price Change by Sentiment Category",
+                labels={
+                    "sentiment_category": "Sentiment",
+                    "value": "Average Price Change (%)",
+                },
+            )
+            fig.update_traces(marker_color="lightblue")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col2:
+            # Bullish/Bearish ratio impact
+            fig = px.scatter(
+                df,
+                x="bullish_comments_ratio",
+                y="price_change_2w",
+                color="comment_sentiment_avg",
+                hover_data=["ticker"],
+                title="Bullish Ratio vs Price Change",
+                labels={
+                    "bullish_comments_ratio": "Bullish Comments Ratio",
+                    "price_change_2w": "Price Change (%)",
+                    "comment_sentiment_avg": "Overall Sentiment",
+                },
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Add sentiment effectiveness analysis
+        st.subheader("Sentiment Prediction Effectiveness")
+
+        # Calculate prediction accuracy
+        df["sentiment_correct"] = (df["comment_sentiment_avg"] > 0) & (
+            df["price_change_2w"] > 0
+        ) | (df["comment_sentiment_avg"] < 0) & (df["price_change_2w"] < 0)
+
+        accuracy = (df["sentiment_correct"].sum() / len(df)) * 100
+
+        # Display metrics
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric("Sentiment Prediction Accuracy", f"{accuracy:.1f}%")
+
+        with col2:
+            bullish_accuracy = (
+                df[
+                    (df["comment_sentiment_avg"] > 0) & (df["price_change_2w"] > 0)
+                ].shape[0]
+                / df[df["comment_sentiment_avg"] > 0].shape[0]
+                * 100
+            )
+            st.metric("Bullish Prediction Accuracy", f"{bullish_accuracy:.1f}%")
+
+        with col3:
+            bearish_accuracy = (
+                df[
+                    (df["comment_sentiment_avg"] < 0) & (df["price_change_2w"] < 0)
+                ].shape[0]
+                / df[df["comment_sentiment_avg"] < 0].shape[0]
+                * 100
+            )
+            st.metric("Bearish Prediction Accuracy", f"{bearish_accuracy:.1f}%")
+
+        # Add time lag analysis
+        st.subheader("Sentiment Lead/Lag Analysis")
+
+        # Calculate lagged correlations
+        lags = range(-5, 6)  # -5 to +5 days
+        correlations = []
+
+        for lag in lags:
+            corr = (
+                df.groupby("ticker")
+                .apply(
+                    lambda x: x["comment_sentiment_avg"]
+                    .shift(lag)
+                    .corr(x["price_change_2w"])
+                )
+                .mean()
+            )
+            correlations.append({"lag": lag, "correlation": corr})
+
+        lag_df = pd.DataFrame(correlations)
+
+        fig = px.line(
+            lag_df,
+            x="lag",
+            y="correlation",
+            title="Sentiment-Price Correlation by Time Lag",
+            labels={"lag": "Time Lag (Days)", "correlation": "Correlation Coefficient"},
+        )
+        fig.add_hline(y=0, line_dash="dash", line_color="gray")
+        st.plotly_chart(fig, use_container_width=True)
+
+    def show_advanced_metrics_tab(self, df: pd.DataFrame, ticker: str):
+        """Enhanced advanced metrics analysis"""
+        st.subheader("Advanced Metrics Analysis")
+
+        # Volatility metrics
+        volatility_metrics = {
+            "Daily Volatility": df["price_change_2d"].std(),
+            "Weekly Volatility": df["price_change_2w"].std(),
+            "Sentiment Volatility": df["comment_sentiment_avg"].std(),
+        }
+
+        cols = st.columns(len(volatility_metrics))
+        for col, (metric, value) in zip(cols, volatility_metrics.items()):
+            col.metric(metric, f"{value:.2f}")
+
+        # Sentiment-Price correlation analysis
+        st.subheader("Sentiment-Price Correlation")
+
+        # Calculate rolling correlation
+        window_size = 5  # 5-day rolling window
+        df["rolling_correlation"] = (
+            df["comment_sentiment_avg"].rolling(window_size).corr(df["price_change_2w"])
+        )
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=df["analysis_timestamp"],
+                y=df["rolling_correlation"],
+                name=f"{window_size}-day Rolling Correlation",
+            )
+        )
+        fig.update_layout(
+            title=f"Rolling Correlation: Sentiment vs Price Change (Window: {window_size} days)",
+            yaxis_title="Correlation Coefficient",
+        )
+        fig.add_hline(y=0, line_dash="dash", line_color="gray")
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Add momentum indicators
+        st.subheader("Sentiment Momentum")
+        df["sentiment_ma5"] = df["comment_sentiment_avg"].rolling(5).mean()
+        df["sentiment_ma20"] = df["comment_sentiment_avg"].rolling(20).mean()
+
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+        # Add sentiment MAs
+        fig.add_trace(
+            go.Scatter(
+                x=df["analysis_timestamp"], y=df["sentiment_ma5"], name="5-day MA"
+            ),
+            secondary_y=False,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=df["analysis_timestamp"], y=df["sentiment_ma20"], name="20-day MA"
+            ),
+            secondary_y=False,
+        )
+
+        # Add price
+        fig.add_trace(
+            go.Scatter(x=df["analysis_timestamp"], y=df["current_price"], name="Price"),
+            secondary_y=True,
+        )
+
+        fig.update_layout(
+            title="Sentiment Moving Averages vs Price",
+            yaxis_title="Sentiment Score",
+            yaxis2_title="Price ($)",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
     def run(self):
-        """Run the Streamlit dashboard"""
+        """Enhanced run method with sentiment-price analysis"""
         self.setup_page()
 
         # Add top-level metrics
         self.add_metrics_section()
-
-        # Sidebar filters
-        st.sidebar.header("Filters")
 
         # Get data
         df = self.get_latest_analysis()
         if df.empty:
             st.warning("No data available")
             return
+
+        # Add correlation analysis
+        self.add_correlation_analysis(df)
+
+        # Add sentiment-price analysis
+        self.add_sentiment_price_analysis(df)
 
         # Add trend analysis
         self.add_trend_analysis(df)
@@ -538,51 +727,6 @@ class StockSentimentDashboard:
 
         with tab4:
             self.show_advanced_metrics_tab(stock_data, ticker)
-
-    def show_advanced_metrics_tab(self, df: pd.DataFrame, ticker: str):
-        """Show advanced metrics analysis"""
-        st.subheader("Advanced Metrics Analysis")
-
-        # Calculate volatility metrics
-        volatility_metrics = {
-            "Daily Volatility": df["price_change_2d"].std(),
-            "Weekly Volatility": df["price_change_2w"].std(),
-            "Sentiment Volatility": df["comment_sentiment_avg"].std(),
-        }
-
-        # Display metrics
-        cols = st.columns(len(volatility_metrics))
-        for col, (metric, value) in zip(cols, volatility_metrics.items()):
-            col.metric(metric, f"{value:.2f}")
-
-        # Add momentum indicators
-        st.subheader("Momentum Analysis")
-        df["sentiment_ma5"] = df["comment_sentiment_avg"].rolling(5).mean()
-        df["sentiment_ma20"] = df["comment_sentiment_avg"].rolling(20).mean()
-
-        fig = go.Figure()
-        fig.add_trace(
-            go.Scatter(
-                x=df["analysis_timestamp"], y=df["sentiment_ma5"], name="5-day MA"
-            )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=df["analysis_timestamp"], y=df["sentiment_ma20"], name="20-day MA"
-            )
-        )
-        fig.update_layout(title="Sentiment Moving Averages")
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Add sentiment distribution
-        st.subheader("Sentiment Distribution")
-        fig = px.histogram(
-            df,
-            x="comment_sentiment_avg",
-            nbins=30,
-            title="Sentiment Distribution Over Time",
-        )
-        st.plotly_chart(fig, use_container_width=True)
 
 
 if __name__ == "__main__":

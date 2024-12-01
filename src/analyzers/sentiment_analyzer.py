@@ -123,7 +123,7 @@ class EnhancedStockAnalyzer:
             return False
 
         try:
-            info = yf.Ticker(ticker).history(period="5d", interval="1d")
+            info = yf.Ticker(ticker).history(period="1mo", interval="1d")
 
             return len(info) > 0
 

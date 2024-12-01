@@ -33,7 +33,6 @@ def main():
         "stocks",
         "investing",
         "stockmarket",
-        "BullTrader",
         "robinhood",
         "Superstonk",
         "ValueInvesting",
@@ -222,6 +221,7 @@ def main():
 
     # Save results with quality metadata
     analyzer.save_results_to_storage(top_stocks)
+    analyzer.save_results(top_stocks)
     analyzer.db.save_sentiment_analysis(top_stocks)
 
     # Log summary
