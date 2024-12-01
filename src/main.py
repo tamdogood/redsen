@@ -29,7 +29,7 @@ def main():
     )
 
     subreddits_to_analyze = [
-        "wallstreetbets",
+        # "wallstreetbets",
         "stocks",
         # "investing",
         # "stockmarket",
@@ -53,7 +53,16 @@ def main():
         logger.error("No data collected from any subreddit")
         return
 
+    data_start_date = dt.datetime.now() - dt.timedelta(days=30)
+    data_end_date = dt.datetime.now()
+
     # Process and aggregate results with enhanced metrics
+    market_data = yf.download(
+        "SPY",
+        start=data_start_date,
+        end=data_end_date,
+    )
+
     for df in final_results:
         df["analysis_timestamp"] = dt.datetime.now()
         df["data_start_date"] = dt.datetime.now() - dt.timedelta(days=30)
@@ -61,11 +70,6 @@ def main():
 
         # Add market context with proper scalar conversion
         try:
-            market_data = yf.download(
-                "SPY",
-                start=df["data_start_date"].iloc[0],
-                end=df["data_end_date"].iloc[0],
-            )
 
             def calculate_correlation(ticker):
                 if pd.isna(ticker):
@@ -214,7 +218,7 @@ def main():
     )
 
     # Save results with quality metadata
-    analyzer.save_results(top_stocks)
+    analyzer.save_results_to_storage(top_stocks)
     analyzer.db.save_sentiment_analysis(top_stocks)
 
     # Log summary

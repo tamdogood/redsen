@@ -1,3 +1,4 @@
+import io
 import praw
 import nltk
 import pandas as pd
@@ -9,11 +10,14 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
 from dotenv import load_dotenv
-from connectors.supabase_connector import SupabaseConnector
+from connectors.supabase_connector import CustomJSONEncoder, SupabaseConnector
 from utils.logging_config import logger
 from openai import OpenAI
 import json
 import os
+import hashlib
+import time
+from utils.types import SentimentAnalysisResult
 
 
 load_dotenv()
@@ -199,7 +203,7 @@ class EnhancedStockAnalyzer:
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0,
-                max_tokens=150,
+                max_tokens=25,
             )
 
             # Parse response
@@ -515,7 +519,7 @@ class EnhancedStockAnalyzer:
             return {}
 
     def analyze_subreddit_sentiment(
-        self, subreddit_name: str, time_filter: str = "week", limit: int = 5
+        self, subreddit_name: str, time_filter: str = "week", limit: int = 2
     ) -> pd.DataFrame:
         """Analyze subreddit with improved error handling and save posts by ticker"""
         sentiment_data = self._get_reddit_sentiment(subreddit_name, time_filter, limit)
@@ -593,7 +597,9 @@ class EnhancedStockAnalyzer:
                 )
 
                 # Analyze comments with weighted scoring
-                submission.comments.replace_more(limit=20)
+                submission.comments.replace_more(
+                    limit=int(os.getenv("REDDIT_COMMENT_LIMIT", 10))
+                )
                 comments = submission.comments.list()
 
                 comment_data = []
@@ -727,19 +733,19 @@ class EnhancedStockAnalyzer:
             # Get basic sentiment features
             basic_features = self._get_basic_sentiment_features(text)
 
-            # Get LLM sentiment if text is substantial enough (e.g., > 50 chars)
-            llm_sentiment = {}
-            if len(text) > 50:
-                try:
-                    llm_sentiment = self._get_llm_sentiment(text)
-                except Exception as e:
-                    logger.warning(f"LLM sentiment analysis failed: {str(e)}")
-                    llm_sentiment = {
-                        "score": 0,
-                        "features": {},
-                        "confidence": 0,
-                        "terms": [],
-                    }
+            # # Get LLM sentiment if text is substantial enough (e.g., > 50 chars)
+            # llm_sentiment = {}
+            # if len(text) > 50:
+            #     try:
+            #         llm_sentiment = self._get_llm_sentiment(text)
+            #     except Exception as e:
+            #         logger.warning(f"LLM sentiment analysis failed: {str(e)}")
+            #         llm_sentiment = {
+            #             "score": 0,
+            #             "features": {},
+            #             "confidence": 0,
+            #             "terms": [],
+            #         }
 
             # Combine base scores with adjustments
             base_score = vader_scores["compound"]
@@ -754,7 +760,7 @@ class EnhancedStockAnalyzer:
                 1.0,
                 (
                     0.4 * (1 - vader_scores["neu"])  # VADER confidence
-                    + 0.4 * llm_sentiment.get("confidence", 0)  # LLM confidence
+                    # + 0.4 * llm_sentiment.get("confidence", 0)  # LLM confidence
                     + 0.2
                     * (len(text) / 1000)  # Length-based confidence (max at 1000 chars)
                 ),
@@ -763,7 +769,7 @@ class EnhancedStockAnalyzer:
             # Combine all signals
             final_compound = (
                 adjusted_score * 0.4  # Adjusted VADER score
-                + llm_sentiment.get("score", 0) * 0.4  # LLM score
+                # + llm_sentiment.get("score", 0) * 0.4  # LLM score
                 + base_score * 0.2  # Original VADER score
             )
 
@@ -774,9 +780,9 @@ class EnhancedStockAnalyzer:
                 "compound": final_compound,
                 "confidence": confidence_score,
                 "vader_scores": vader_scores,
-                "llm_sentiment": llm_sentiment,
+                # "llm_sentiment": llm_sentiment,
                 "features": basic_features,
-                "terms": llm_sentiment.get("terms", []),
+                # "terms": llm_sentiment.get("terms", []),
                 "pos": vader_scores["pos"],
                 "neg": vader_scores["neg"],
                 "neu": vader_scores["neu"],
@@ -1018,39 +1024,86 @@ class EnhancedStockAnalyzer:
         # Ensure weight is within bounds
         return min(max(final_weight, 0.5), 2.0)
 
-    def _get_llm_sentiment(self, text: str) -> Dict:
-        """Get sentiment analysis from OpenAI"""
-        prompt = f"""Analyze the sentiment of this financial text and provide:
-        1. A sentiment score between -1 and 1
-        2. Key features identified (bullish/bearish signals, confidence level)
-        3. Any specific financial terms or indicators mentioned
-        
-        Text: {text}
-        
-        Return the analysis in JSON format with these keys:
-        - score: float
-        - features: dict
-        - confidence: float
-        - terms: list
-        """
+    # def _get_llm_sentiment(self, text: str) -> Dict:
+    #     """Get sentiment analysis from OpenAI with proper schema validation"""
+    #     try:
+    #         # Generate hash of the text for deduplication
+    #         text_hash = hashlib.sha256(text.encode()).hexdigest()
 
-        response = self.openai_client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a financial analyst expert in market sentiment analysis.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0,
-        )
+    #         # Check cache
+    #         existing_analysis = self.db.get_llm_sentiment(text_hash)
+    #         if existing_analysis:
+    #             return {
+    #                 "score": existing_analysis["sentiment_score"],
+    #                 "features": existing_analysis["features"],
+    #                 "confidence": existing_analysis["confidence_score"],
+    #                 "terms": existing_analysis["terms"],
+    #             }
 
-        try:
-            analysis = json.loads(response.choices[0].message.content)
-            return analysis
-        except:
-            return {"score": 0, "features": {}, "confidence": 0, "terms": []}
+    #         start_time = time.time()
+
+    #         system_message = {
+    #             "role": "system",
+    #             "content": """You are a financial analyst expert in market sentiment analysis.
+    #             Analyze the given text and provide a structured sentiment analysis response.
+    #             Ensure all numeric values are within their specified ranges.""",
+    #         }
+
+    #         user_message = {
+    #             "role": "user",
+    #             "content": f"""Analyze the sentiment of this financial text and provide:
+
+    #             Text: {text}
+
+    #             Return a JSON response with the following structure:
+    #             {{
+    #                 "score": <float between -1 and 1>,
+    #             }}""",
+    #         }
+
+    #         # Call OpenAI API with standard JSON response
+    #         response = self.openai_client.chat.completions.create(
+    #             model="gpt-4",
+    #             messages=[system_message, user_message],
+    #             temperature=0,
+    #             # response_format={"type": "json_object"},
+    #         )
+
+    #         processing_time = int((time.time() - start_time) * 1000)
+
+    #         try:
+    #             # Parse the response
+    #             sentiment_result = json.loads(response.choices[0].message.content)
+
+    #             # Validate against schema
+    #             validated_result = SentimentAnalysisResult(**sentiment_result)
+
+    #             # Prepare record for storage
+    #             sentiment_data = {
+    #                 "text_hash": text_hash,
+    #                 "original_text": text,
+    #                 "analysis_timestamp": dt.datetime.now().isoformat(),
+    #                 "sentiment_score": validated_result.score,
+    #                 "raw_response": response.model_dump(),
+    #                 "processing_time_ms": processing_time,
+    #                 "model_version": "gpt-4",
+    #             }
+
+    #             # Store in database
+    #             self.db.save_llm_sentiment(sentiment_data)
+
+    #             return validated_result.model_dump()
+
+    #         except json.JSONDecodeError as e:
+    #             logger.error(f"Error parsing OpenAI response: {str(e)}")
+    #             return {"score": 0, "features": {}, "confidence": 0, "terms": []}
+    #         except ValueError as e:
+    #             logger.error(f"Schema validation error: {str(e)}")
+    #             return {"score": 0, "features": {}, "confidence": 0, "terms": []}
+
+    #     except Exception as e:
+    #         logger.error(f"Error in LLM sentiment analysis: {str(e)}")
+    #         return {"score": 0, "features": {}, "confidence": 0, "terms": []}
 
     def _calculate_technical_indicators(self, hist: pd.DataFrame) -> Dict:
         """Calculate comprehensive technical indicators"""
@@ -1343,3 +1396,209 @@ class EnhancedStockAnalyzer:
         except Exception as e:
             logger.error(f"Error saving results: {str(e)}")
             raise  # Re-raise the exception for debugging
+
+    def save_results_to_storage(
+        self, df: pd.DataFrame, bucket_name: str = "analysis-results"
+    ) -> Dict:
+        """
+        Save analysis results to Supabase storage bucket with improved organization and metadata
+
+        Args:
+            df (pd.DataFrame): Analysis results DataFrame
+            bucket_name (str): Name of the storage bucket
+
+        Returns:
+            Dict: Operation status and results
+        """
+        if df.empty:
+            logger.warning("No results to save")
+            return {"success": False, "error": "Empty DataFrame provided"}
+
+        try:
+            # Add timing information to DataFrame
+            current_time = dt.datetime.now()
+            df["analysis_timestamp"] = current_time
+            df["data_start_date"] = current_time - dt.timedelta(days=30)
+            df["data_end_date"] = current_time
+
+            # Save results using new SupabaseConnector method
+            storage_result = self.db.save_analysis_to_storage(df, bucket_name)
+
+            if not storage_result["success"]:
+                logger.error(
+                    f"Failed to save to storage: {storage_result.get('error')}"
+                )
+                return storage_result
+
+            # Generate additional analysis report
+            report = self.generate_analysis_report(df)
+
+            # Save report to storage
+            report_result = self.db.save_to_storage(
+                {
+                    "content": report,
+                    "path": f"{storage_result['base_path']}/analysis_report.txt",
+                    "content_type": "text/plain",
+                },
+                bucket_name,
+            )
+
+            # Save enhanced sentiment data
+            sentiment_data = self.prepare_sentiment_data(df)
+            sentiment_result = self.db.save_to_storage(
+                {
+                    "content": json.dumps(sentiment_data, indent=2),
+                    "path": f"{storage_result['base_path']}/sentiment_analysis.json",
+                    "content_type": "application/json",
+                },
+                bucket_name,
+            )
+
+            # Combine all results
+            results = {
+                "success": True,
+                "base_path": storage_result["base_path"],
+                "timestamp": current_time.isoformat(),
+                "files": {
+                    **storage_result["upload_results"],
+                    "report": report_result,
+                    "sentiment": sentiment_result,
+                },
+                "analysis_metadata": {
+                    "total_stocks": len(df),
+                    "analysis_period": {
+                        "start": df["data_start_date"].iloc[0].isoformat(),
+                        "end": df["data_end_date"].iloc[0].isoformat(),
+                    },
+                    "metrics_generated": list(df.columns),
+                },
+            }
+
+            logger.info(
+                f"Analysis results successfully saved to storage bucket: {bucket_name}\n"
+                f"Base path: {storage_result['base_path']}\n"
+                f"Total files saved: {len(results['files'])}"
+            )
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Error saving results to storage: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "timestamp": dt.datetime.now().isoformat(),
+            }
+
+    def prepare_sentiment_data(self, df: pd.DataFrame) -> Dict:
+        """
+        Prepare enhanced sentiment analysis data for storage
+
+        Args:
+            df: Analysis DataFrame
+
+        Returns:
+            Dict containing organized sentiment data
+        """
+        sentiment_data = {
+            "analysis_timestamp": dt.datetime.now(),
+            "metadata": {
+                "total_stocks_analyzed": int(len(df)),
+                "average_sentiment": (
+                    float(df["comment_sentiment_avg"].mean())
+                    if "comment_sentiment_avg" in df.columns
+                    else 0.0
+                ),
+                "total_comments_analyzed": (
+                    int(df["num_comments"].sum()) if "num_comments" in df.columns else 0
+                ),
+                "sentiment_distribution": {
+                    "bullish": (
+                        float(df["bullish_comments_ratio"].mean())
+                        if "bullish_comments_ratio" in df.columns
+                        else 0.0
+                    ),
+                    "bearish": (
+                        float(df["bearish_comments_ratio"].mean())
+                        if "bearish_comments_ratio" in df.columns
+                        else 0.0
+                    ),
+                    "neutral": (
+                        float(
+                            1
+                            - df["bullish_comments_ratio"].mean()
+                            - df["bearish_comments_ratio"].mean()
+                        )
+                        if all(
+                            col in df.columns
+                            for col in [
+                                "bullish_comments_ratio",
+                                "bearish_comments_ratio",
+                            ]
+                        )
+                        else 0.0
+                    ),
+                },
+            },
+            "stocks": [
+                {
+                    "ticker": str(row["ticker"]),
+                    "sentiment_metrics": {
+                        "comment_sentiment_avg": float(
+                            row.get("comment_sentiment_avg", 0)
+                        ),
+                        "bullish_ratio": float(row.get("bullish_comments_ratio", 0)),
+                        "bearish_ratio": float(row.get("bearish_comments_ratio", 0)),
+                        "sentiment_confidence": float(
+                            row.get("sentiment_confidence", 0)
+                        ),
+                    },
+                    "performance_metrics": {
+                        "price_change_2w": float(row.get("price_change_2w", 0)),
+                        "volume_change": float(row.get("volume_change", 0)),
+                        "technical_score": float(row.get("technical_score", 0)),
+                        "sentiment_score": float(row.get("sentiment_score", 0)),
+                    },
+                    "activity_metrics": {
+                        "num_comments": int(row.get("num_comments", 0)),
+                        "score": int(row.get("score", 0)),
+                        "composite_score": float(row.get("composite_score", 0)),
+                    },
+                }
+                for _, row in df.iterrows()
+            ],
+        }
+
+        # Add correlations if possible
+        try:
+            sentiment_data["correlations"] = {
+                "sentiment_price": (
+                    float(df["comment_sentiment_avg"].corr(df["price_change_2w"]))
+                    if all(
+                        col in df.columns
+                        for col in ["comment_sentiment_avg", "price_change_2w"]
+                    )
+                    else 0.0
+                ),
+                "sentiment_volume": (
+                    float(df["comment_sentiment_avg"].corr(df["volume_change"]))
+                    if all(
+                        col in df.columns
+                        for col in ["comment_sentiment_avg", "volume_change"]
+                    )
+                    else 0.0
+                ),
+                "sentiment_score": (
+                    float(df["comment_sentiment_avg"].corr(df["composite_score"]))
+                    if all(
+                        col in df.columns
+                        for col in ["comment_sentiment_avg", "composite_score"]
+                    )
+                    else 0.0
+                ),
+            }
+        except Exception as e:
+            logger.warning(f"Error calculating correlations: {str(e)}")
+            sentiment_data["correlations"] = {}
+
+        return json.loads(json.dumps(sentiment_data, cls=CustomJSONEncoder))
