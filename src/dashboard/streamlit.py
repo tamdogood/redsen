@@ -107,41 +107,6 @@ class StockSentimentDashboard:
                 fig.update_layout(title="MACD")
                 st.plotly_chart(fig, use_container_width=True)
 
-    def show_sentiment_tab(self, df: pd.DataFrame, ticker: str):
-        """Show sentiment analysis"""
-        # Get recent posts
-        posts = self.get_recent_posts(ticker)
-
-        # Sentiment trend
-        fig = px.line(
-            df,
-            x="analysis_timestamp",
-            y=[
-                "comment_sentiment_avg",
-                "bullish_comments_ratio",
-                "bearish_comments_ratio",
-            ],
-            title="Sentiment Trends",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Recent posts
-        st.subheader("Recent Discussions")
-        for post in posts:
-            # Handle potential missing fields gracefully
-            title = post.get("title", "No title")
-            score = post.get("score", 0)
-            content = post.get("content", "No content")
-            sentiment = post.get("avg_sentiment", 0)
-            num_comments = post.get("num_comments", 0)
-
-            with st.expander(f"{title} (Score: {score})"):
-                st.write(content)
-                st.write(f"Sentiment: {sentiment:.2f}")
-                st.write(f"Comments: {num_comments}")
-                if post.get("url"):
-                    st.write(f"[View on Reddit]({post['url']})")
-
     def get_stock_data(self, ticker: str) -> pd.DataFrame:
         """Get historical data for a stock"""
         try:
@@ -177,19 +142,134 @@ class StockSentimentDashboard:
     def get_recent_posts(self, ticker: str) -> list:
         """Get recent Reddit posts for a stock"""
         try:
-            result = (
+            # First, get post IDs for the ticker
+            post_ids_result = (
                 self.supabase.table("post_tickers")
-                .select("*, reddit_posts!fk_post_tickers_post(*)")  # Modified this line
+                .select("post_id")
                 .eq("ticker", ticker)
-                .order("mentioned_at")
+                .order("mentioned_at", ascending=False)
                 .limit(5)
                 .execute()
             )
 
-            return result.data
+            if not post_ids_result.data:
+                return []
+
+            # Extract post IDs
+            post_ids = [item["post_id"] for item in post_ids_result.data]
+
+            # Then get the actual posts
+            posts_result = (
+                self.supabase.table("reddit_posts")
+                .select("*")
+                .in_("post_id", post_ids)
+                .execute()
+            )
+
+            return posts_result.data
+
         except Exception as e:
-            st.error(f"Error fetching posts: {str(e)}")
             return []
+
+    def show_sentiment_tab(self, df: pd.DataFrame, ticker: str):
+        """Show sentiment analysis"""
+        try:
+            # Get recent posts
+            posts = self.get_recent_posts(ticker)
+
+            # Sentiment trend
+            if not df.empty:
+                fig = px.line(
+                    df,
+                    x="analysis_timestamp",
+                    y=[
+                        "comment_sentiment_avg",
+                        "bullish_comments_ratio",
+                        "bearish_comments_ratio",
+                    ],
+                    title="Sentiment Trends",
+                    labels={
+                        "analysis_timestamp": "Date",
+                        "value": "Score",
+                        "variable": "Metric",
+                    },
+                )
+
+                # Update line colors and names
+                fig.update_traces(
+                    line_color="green",
+                    name="Overall Sentiment",
+                    selector=dict(name="comment_sentiment_avg"),
+                )
+                fig.update_traces(
+                    line_color="blue",
+                    name="Bullish Ratio",
+                    selector=dict(name="bullish_comments_ratio"),
+                )
+                fig.update_traces(
+                    line_color="red",
+                    name="Bearish Ratio",
+                    selector=dict(name="bearish_comments_ratio"),
+                )
+
+                # Update layout
+                fig.update_layout(
+                    legend_title="Metrics",
+                    hovermode="x unified",
+                    plot_bgcolor="white",
+                    yaxis=dict(gridcolor="lightgrey"),
+                    xaxis=dict(gridcolor="lightgrey"),
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+
+            # Recent posts section
+            st.subheader("Recent Discussions")
+            if posts:
+                for post in posts:
+                    with st.expander(
+                        f"📝 {post.get('title', 'No title')} (Score: {post.get('score', 0)})"
+                    ):
+                        # Post content
+                        st.markdown(
+                            f"**Content:**\n{post.get('content', 'No content')}"
+                        )
+
+                        # Metrics in columns
+                        col1, col2, col3 = st.columns(3)
+
+                        with col1:
+                            st.metric(
+                                "Sentiment",
+                                f"{post.get('avg_sentiment', 0):.2f}",
+                                delta=(
+                                    "Positive"
+                                    if post.get("avg_sentiment", 0) > 0
+                                    else "Negative"
+                                ),
+                            )
+
+                        with col2:
+                            st.metric("Comments", post.get("num_comments", 0))
+
+                        with col3:
+                            st.metric(
+                                "Upvote Ratio", f"{post.get('upvote_ratio', 0):.1%}"
+                            )
+
+                        # Additional information
+                        st.caption(
+                            f"Posted by u/{post.get('author', '[deleted]')} on {post.get('created_at', 'unknown date')}"
+                        )
+
+                        if post.get("url"):
+                            st.markdown(f"[View on Reddit]({post['url']})")
+            else:
+                st.info("No recent discussions found for this stock.")
+
+        except Exception as e:
+            st.error(f"Error displaying sentiment analysis: {str(e)}")
+            logger.error(f"Error in sentiment tab: {str(e)}")
 
     def get_sentiment_trends(self, ticker: str, days: int = 30) -> pd.DataFrame:
         """Get sentiment trends for a specific ticker"""
