@@ -11,7 +11,7 @@ regex==2023.10.3
 requests==2.31.0
 scipy==1.11.4
 Scrapy==2.11.0
-streamlit==1.18.1
+streamlit==1.40.2
 yfinance==0.2.50
 praw==7.8.1
 supabase==2.10.0
