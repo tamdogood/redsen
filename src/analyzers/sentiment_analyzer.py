@@ -15,8 +15,6 @@ from utils.logging_config import logger
 from openai import OpenAI
 import json
 import os
-import hashlib
-import time
 from utils.types import SentimentAnalysisResult
 
 
