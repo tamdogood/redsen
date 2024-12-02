@@ -446,44 +446,205 @@ class StockSentimentDashboard:
         st.plotly_chart(fig, use_container_width=True)
 
     def add_technical_signals(self, df: pd.DataFrame):
-        """Add technical signals analysis"""
-        st.header("Technical Signals")
+        """Display enhanced technical analysis signals"""
+        st.header("Technical Analysis Signals")
 
-        # Calculate technical signals
-        signals = []
+        # Calculate signals with categories
+        signal_data = self._calculate_signals(df)
+
+        # Create tabs for different signal categories
+        tab1, tab2, tab3, tab4 = st.tabs(
+            ["🎯 RSI Signals", "📊 Volatility", "💹 Volume", "💭 Sentiment"]
+        )
+
+        with tab1:
+            self._display_rsi_signals(signal_data["rsi"])
+
+        with tab2:
+            self._display_volatility_signals(signal_data["volatility"])
+
+        with tab3:
+            self._display_volume_signals(signal_data["volume"])
+
+        with tab4:
+            self._display_sentiment_signals(signal_data["sentiment"])
+
+        # Display summary of all signals
+        st.subheader("Signal Summary")
+        for ticker, signals in signal_data["all_signals"].items():
+            if signals:
+                with st.expander(f"🔍 {ticker}"):
+                    col1, col2 = st.columns([1, 2])
+                    with col1:
+                        signal_count = len(signals)
+                        st.metric("Total Signals", signal_count)
+                    with col2:
+                        for signal in signals:
+                            self._display_signal_badge(signal)
+
+    def _calculate_signals(self, df: pd.DataFrame) -> dict:
+        """Calculate all technical signals"""
+        signals = {
+            "rsi": {"overbought": [], "oversold": []},
+            "volatility": {"high": []},
+            "volume": {"spike": []},
+            "sentiment": {"bullish": [], "bearish": []},
+            "all_signals": {},
+        }
+
         for _, row in df.iterrows():
             ticker = row["ticker"]
-            signals_dict = {"ticker": ticker, "signals": []}
+            ticker_signals = []
 
-            # RSI signals
+            # RSI Signals
             if row["rsi"] > 70:
-                signals_dict["signals"].append("Overbought (RSI)")
+                signals["rsi"]["overbought"].append((ticker, row["rsi"]))
+                ticker_signals.append(
+                    {"type": "RSI", "signal": "Overbought", "value": row["rsi"]}
+                )
             elif row["rsi"] < 30:
-                signals_dict["signals"].append("Oversold (RSI)")
+                signals["rsi"]["oversold"].append((ticker, row["rsi"]))
+                ticker_signals.append(
+                    {"type": "RSI", "signal": "Oversold", "value": row["rsi"]}
+                )
 
-            # Volatility signals
+            # Volatility Signals
             if row["volatility"] > df["volatility"].quantile(0.75):
-                signals_dict["signals"].append("High Volatility")
+                signals["volatility"]["high"].append((ticker, row["volatility"]))
+                ticker_signals.append(
+                    {"type": "Volatility", "signal": "High", "value": row["volatility"]}
+                )
 
-            # Volume signals
+            # Volume Signals
             if row["volume_change"] > 50:
-                signals_dict["signals"].append("Volume Spike")
+                signals["volume"]["spike"].append((ticker, row["volume_change"]))
+                ticker_signals.append(
+                    {"type": "Volume", "signal": "Spike", "value": row["volume_change"]}
+                )
 
-            # Sentiment signals
+            # Sentiment Signals
             if row["comment_sentiment_avg"] > df["comment_sentiment_avg"].quantile(0.8):
-                signals_dict["signals"].append("Strong Bullish Sentiment")
+                signals["sentiment"]["bullish"].append(
+                    (ticker, row["comment_sentiment_avg"])
+                )
+                ticker_signals.append(
+                    {
+                        "type": "Sentiment",
+                        "signal": "Bullish",
+                        "value": row["comment_sentiment_avg"],
+                    }
+                )
             elif row["comment_sentiment_avg"] < df["comment_sentiment_avg"].quantile(
                 0.2
             ):
-                signals_dict["signals"].append("Strong Bearish Sentiment")
+                signals["sentiment"]["bearish"].append(
+                    (ticker, row["comment_sentiment_avg"])
+                )
+                ticker_signals.append(
+                    {
+                        "type": "Sentiment",
+                        "signal": "Bearish",
+                        "value": row["comment_sentiment_avg"],
+                    }
+                )
 
-            if signals_dict["signals"]:
-                signals.append(signals_dict)
+            if ticker_signals:
+                signals["all_signals"][ticker] = ticker_signals
 
-        # Display signals
-        st.subheader("Active Technical Signals")
-        for signal in signals:
-            st.write(f"**{signal['ticker']}**: {', '.join(signal['signals'])}")
+        return signals
+
+    def _display_rsi_signals(self, rsi_signals: dict):
+        """Display RSI signals with visualization"""
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("Overbought Stocks (RSI > 70)")
+            for ticker, rsi in rsi_signals["overbought"]:
+                st.metric(
+                    ticker, f"RSI: {rsi:.1f}", "⚠️ Overbought", delta_color="inverse"
+                )
+
+        with col2:
+            st.subheader("Oversold Stocks (RSI < 30)")
+            for ticker, rsi in rsi_signals["oversold"]:
+                st.metric(
+                    ticker, f"RSI: {rsi:.1f}", "💡 Oversold", delta_color="normal"
+                )
+
+    def _display_volatility_signals(self, volatility_signals: dict):
+        """Display volatility signals"""
+        st.subheader("High Volatility Stocks")
+        columns = st.columns(3)
+        for i, (ticker, vol) in enumerate(volatility_signals["high"]):
+            with columns[i % 3]:
+                st.metric(ticker, f"Vol: {vol:.1f}%", "📈 High Volatility")
+
+    def _display_volume_signals(self, volume_signals: dict):
+        """Display volume signals"""
+        st.subheader("Volume Spikes")
+        for ticker, change in volume_signals["spike"]:
+            st.metric(
+                ticker, f"Volume Δ: {change:.1f}%", "🔊 Volume Spike", delta_color="off"
+            )
+
+    def _display_sentiment_signals(self, sentiment_signals: dict):
+        """Display sentiment signals"""
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("Bullish Sentiment")
+            for ticker, sentiment in sentiment_signals["bullish"]:
+                st.metric(
+                    ticker,
+                    f"Score: {sentiment:.2f}",
+                    "🚀 Strong Bullish",
+                    delta_color="normal",
+                )
+
+        with col2:
+            st.subheader("Bearish Sentiment")
+            for ticker, sentiment in sentiment_signals["bearish"]:
+                st.metric(
+                    ticker,
+                    f"Score: {sentiment:.2f}",
+                    "⚠️ Strong Bearish",
+                    delta_color="inverse",
+                )
+
+    def _display_signal_badge(self, signal: dict):
+        """Display a styled signal badge"""
+        signal_colors = {
+            "RSI": "#FF9800",
+            "Volatility": "#2196F3",
+            "Volume": "#4CAF50",
+            "Sentiment": "#9C27B0",
+        }
+
+        signal_icons = {
+            "Overbought": "⚠️",
+            "Oversold": "💡",
+            "High": "📈",
+            "Spike": "🔊",
+            "Bullish": "🚀",
+            "Bearish": "📉",
+        }
+
+        st.markdown(
+            f"""
+            <div style="
+                display: inline-block;
+                padding: 4px 12px;
+                margin: 2px;
+                border-radius: 15px;
+                background-color: {signal_colors[signal['type']]};
+                color: white;
+                font-size: 0.9em;
+            ">
+                {signal_icons.get(signal['signal'], '•')} {signal['type']}: {signal['signal']} ({signal['value']:.1f})
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     def add_sentiment_price_analysis(self, df: pd.DataFrame):
         """Add analysis of sentiment vs price relationships"""
