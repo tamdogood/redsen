@@ -105,6 +105,9 @@ class EnhancedStockAnalyzer:
             "DIY",
             "ROI",
             "KPI",
+            "ROTH",
+            "401K",
+            "IRA",
         }
 
     def is_valid_ticker(self, ticker: str) -> bool:

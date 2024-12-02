@@ -19,10 +19,12 @@ class StockSentimentDashboard:
     def setup_page(self):
         """Configure Streamlit page settings"""
         st.set_page_config(
-            page_title="Stock Sentiment Analysis", page_icon="📈", layout="wide"
+            page_title="redsen - Stock Sentiment Analysis",
+            page_icon="📈",
+            layout="wide",
         )
 
-        st.title("Stock Sentiment Analysis Dashboard")
+        st.title("redsen - Stock Sentiment Analysis Dashboard")
 
     def show_overview_tab(self, df: pd.DataFrame):
         """Show overview metrics"""
