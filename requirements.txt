@@ -14,6 +14,6 @@ scipy==1.11.4
 Scrapy==2.11.0
 streamlit==1.18.1
 torch==2.1.1
-yfinance=0.2.50
-praw=7.8.1
-supabase=2.10.0
+yfinance==0.2.50
+praw==7.8.1
+supabase==2.10.0
