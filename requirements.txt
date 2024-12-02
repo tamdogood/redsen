@@ -1,9 +1,8 @@
 anthropic==0.25.6
 nltk==3.8.1
-numpy==1.24.2
-openai==1.7.2
-openapi-schema-pydantic==1.2.4
-pandas==2.1.1
+numpy==1.26.4
+openai==1.55.3
+pandas==2.2.3
 pydantic==2.7.1
 pydantic_core==2.18.2
 pyparsing==3.0.5
