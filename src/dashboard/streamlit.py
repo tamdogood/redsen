@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import numpy as np
 from supabase import create_client
 from dotenv import load_dotenv
+import statsmodels
 import os
 
 
@@ -310,35 +311,330 @@ class StockSentimentDashboard:
             col.metric(metric, value)
 
     def add_correlation_analysis(self, df: pd.DataFrame):
-        """Add correlation analysis section"""
+        """Add enhanced correlation analysis section"""
         st.header("Correlation Analysis")
 
-        # Select relevant columns for correlation
-        correlation_cols = [
-            "comment_sentiment_avg",
-            "price_change_2w",
-            "volume_change",
-            "rsi",
-            "volatility",
-            "num_comments",
+        # Define correlation groups
+        correlation_groups = {
+            "Price & Returns": [
+                "current_price",
+                "price_change_2w",
+                "price_change_2d",
+                "volume_change",
+            ],
+            "Technical Indicators": ["rsi", "volatility", "sma_20", "volume_change"],
+            "Sentiment Metrics": [
+                "comment_sentiment_avg",
+                "bullish_comments_ratio",
+                "bearish_comments_ratio",
+                "num_comments",
+                "score",
+            ],
+        }
+
+        # Create tabs for different correlation views
+        tab1, tab2, tab3 = st.tabs(
+            ["🎯 Key Correlations", "📊 Correlation Matrix", "📈 Correlation Insights"]
+        )
+
+        with tab1:
+            self._display_key_correlations(df, correlation_groups)
+
+        with tab2:
+            self._display_correlation_matrix(df, correlation_groups)
+
+        with tab3:
+            self._display_correlation_insights(df, correlation_groups)
+
+    def _display_key_correlations(self, df: pd.DataFrame, correlation_groups: dict):
+        """Display key correlation pairs with interpretation"""
+        st.subheader("Key Correlation Pairs")
+
+        # Calculate important correlations
+        key_pairs = [
+            {
+                "pair": ("comment_sentiment_avg", "price_change_2w"),
+                "name": "Sentiment vs Price Change",
+                "description": "Relationship between sentiment and 2-week price movement",
+            },
+            {
+                "pair": ("bullish_comments_ratio", "volume_change"),
+                "name": "Bullish Sentiment vs Volume",
+                "description": "Impact of bullish sentiment on trading volume",
+            },
+            {
+                "pair": ("num_comments", "volatility"),
+                "name": "Discussion Activity vs Volatility",
+                "description": "Relationship between discussion volume and price volatility",
+            },
+            {
+                "pair": ("rsi", "comment_sentiment_avg"),
+                "name": "RSI vs Sentiment",
+                "description": "Technical indicator alignment with sentiment",
+            },
         ]
 
-        # Calculate correlation matrix
-        corr_matrix = df[correlation_cols].corr()
+        for pair in key_pairs:
+            if all(metric in df.columns for metric in pair["pair"]):
+                corr = df[pair["pair"][0]].corr(df[pair["pair"][1]])
 
-        # Plot heatmap
-        fig = go.Figure(
-            data=go.Heatmap(
-                z=corr_matrix.values,
-                x=correlation_cols,
-                y=correlation_cols,
-                colorscale="RdBu",
-                zmin=-1,
-                zmax=1,
-            )
+                with st.expander(f"{pair['name']}: {corr:.2f}"):
+                    col1, col2 = st.columns([2, 1])
+
+                    with col1:
+                        # Scatter plot
+                        fig = px.scatter(
+                            df,
+                            x=pair["pair"][0],
+                            y=pair["pair"][1],
+                            trendline="ols",
+                            labels={
+                                pair["pair"][0]: pair["pair"][0]
+                                .replace("_", " ")
+                                .title(),
+                                pair["pair"][1]: pair["pair"][1]
+                                .replace("_", " ")
+                                .title(),
+                            },
+                            hover_data=["ticker"],
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
+                    with col2:
+                        # Correlation strength indicator
+                        strength = abs(corr)
+                        if strength > 0.7:
+                            strength_label = "Strong"
+                            color = "red" if corr < 0 else "green"
+                        elif strength > 0.4:
+                            strength_label = "Moderate"
+                            color = "orange" if corr < 0 else "lightgreen"
+                        else:
+                            strength_label = "Weak"
+                            color = "gray"
+
+                        st.metric(
+                            "Correlation Strength",
+                            f"{strength_label} ({corr:.2f})",
+                            delta="Negative" if corr < 0 else "Positive",
+                            delta_color="inverse" if corr < 0 else "normal",
+                        )
+
+                        st.write(pair["description"])
+
+                        # Add top correlated tickers
+                        st.write("**Top Correlated Tickers:**")
+                        top_corr = (
+                            df.groupby("ticker")
+                            .apply(
+                                lambda x: x[pair["pair"][0]].corr(x[pair["pair"][1]])
+                            )
+                            .sort_values(ascending=False)
+                            .head(3)
+                        )
+
+                        for ticker, corr_val in top_corr.items():
+                            st.write(f"- {ticker}: {corr_val:.2f}")
+
+    def _display_correlation_matrix(self, df: pd.DataFrame, correlation_groups: dict):
+        """Display enhanced correlation matrix"""
+        st.subheader("Correlation Matrix")
+
+        # Let user select correlation groups
+        selected_groups = st.multiselect(
+            "Select metric groups to compare:",
+            list(correlation_groups.keys()),
+            default=list(correlation_groups.keys())[:2],
         )
-        fig.update_layout(title="Correlation Matrix")
-        st.plotly_chart(fig, use_container_width=True)
+
+        if selected_groups:
+            # Combine selected metrics
+            selected_metrics = []
+            for group in selected_groups:
+                selected_metrics.extend(correlation_groups[group])
+
+            # Remove duplicates while preserving order
+            selected_metrics = list(dict.fromkeys(selected_metrics))
+
+            # Filter available columns
+            available_metrics = [m for m in selected_metrics if m in df.columns]
+
+            if available_metrics:
+                # Calculate correlation matrix
+                corr_matrix = df[available_metrics].corr()
+
+                # Create heatmap
+                fig = go.Figure(
+                    data=go.Heatmap(
+                        z=corr_matrix.values,
+                        x=[col.replace("_", " ").title() for col in available_metrics],
+                        y=[col.replace("_", " ").title() for col in available_metrics],
+                        colorscale="RdBu",
+                        zmin=-1,
+                        zmax=1,
+                    )
+                )
+
+                fig.update_layout(
+                    title="Correlation Heatmap",
+                    width=800,
+                    height=800,
+                    xaxis_tickangle=-45,
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("No metrics available for selected groups")
+        else:
+            st.warning("Please select at least one metric group")
+
+    def _display_correlation_insights(self, df: pd.DataFrame, correlation_groups: dict):
+        """Display correlation insights and patterns"""
+        st.subheader("Correlation Insights")
+
+        # Calculate and display strongest correlations
+        all_metrics = [
+            metric for group in correlation_groups.values() for metric in group
+        ]
+        available_metrics = [m for m in all_metrics if m in df.columns]
+
+        if available_metrics:
+            corr_matrix = df[available_metrics].corr()
+
+            # Find strongest correlations
+            correlations = []
+            for i in range(len(available_metrics)):
+                for j in range(i + 1, len(available_metrics)):
+                    correlations.append(
+                        {
+                            "metric1": available_metrics[i],
+                            "metric2": available_metrics[j],
+                            "correlation": corr_matrix.iloc[i, j],
+                        }
+                    )
+
+            correlations.sort(key=lambda x: abs(x["correlation"]), reverse=True)
+
+            # Display strongest correlations
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.write("**Strongest Positive Correlations**")
+                positive_corr = [c for c in correlations if c["correlation"] > 0][:5]
+                for corr in positive_corr:
+                    st.metric(
+                        f"{corr['metric1'].replace('_', ' ').title()} vs {corr['metric2'].replace('_', ' ').title()}",
+                        f"{corr['correlation']:.2f}",
+                        "Strong" if abs(corr["correlation"]) > 0.7 else "Moderate",
+                        delta_color="normal",
+                    )
+
+            with col2:
+                st.write("**Strongest Negative Correlations**")
+                negative_corr = [c for c in correlations if c["correlation"] < 0][:5]
+                for corr in negative_corr:
+                    st.metric(
+                        f"{corr['metric1'].replace('_', ' ').title()} vs {corr['metric2'].replace('_', ' ').title()}",
+                        f"{corr['correlation']:.2f}",
+                        "Strong" if abs(corr["correlation"]) > 0.7 else "Moderate",
+                        delta_color="inverse",
+                    )
+
+            # Add pair-wise correlation analysis
+            st.subheader("Pair-wise Correlation Analysis")
+
+            # Select metrics to compare
+            col1, col2 = st.columns(2)
+            with col1:
+                metric1 = st.selectbox(
+                    "Select first metric", available_metrics, key="metric1"
+                )
+            with col2:
+                metric2 = st.selectbox(
+                    "Select second metric", available_metrics, key="metric2"
+                )
+
+            if metric1 and metric2:
+                # Create scatter plot for selected metrics
+                fig = go.Figure()
+
+                # Add scatter plot
+                fig.add_trace(
+                    go.Scatter(
+                        x=df[metric1],
+                        y=df[metric2],
+                        mode="markers",
+                        name="Data Points",
+                        text=df["ticker"],
+                        hovertemplate=f"Ticker: %{{text}}<br>"
+                        + f"{metric1}: %{{x}}<br>"
+                        + f"{metric2}: %{{y}}<br>",
+                    )
+                )
+
+                # Update layout
+                fig.update_layout(
+                    title=f"Correlation between {metric1.replace('_', ' ').title()} and {metric2.replace('_', ' ').title()}",
+                    xaxis_title=metric1.replace("_", " ").title(),
+                    yaxis_title=metric2.replace("_", " ").title(),
+                    showlegend=True,
+                )
+
+                # Display correlation coefficient
+                corr = df[metric1].corr(df[metric2])
+                st.metric(
+                    "Correlation Coefficient",
+                    f"{corr:.2f}",
+                    (
+                        "Strong"
+                        if abs(corr) > 0.7
+                        else "Moderate" if abs(corr) > 0.4 else "Weak"
+                    ),
+                    delta_color="normal" if corr > 0 else "inverse",
+                )
+
+                # Display the plot
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Add top correlated tickers
+                st.subheader("Top Correlated Tickers")
+                # Group by ticker and calculate correlation
+                ticker_correlations = []
+                for ticker in df["ticker"].unique():
+                    ticker_data = df[df["ticker"] == ticker]
+                    if len(ticker_data) > 1:  # Need at least 2 points for correlation
+                        ticker_corr = ticker_data[metric1].corr(ticker_data[metric2])
+                        if not pd.isna(ticker_corr):  # Check if correlation is valid
+                            ticker_correlations.append(
+                                {"ticker": ticker, "correlation": ticker_corr}
+                            )
+
+                # Sort and display top positive and negative correlations
+                if ticker_correlations:
+                    ticker_df = pd.DataFrame(ticker_correlations)
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.write("**Strongest Positive**")
+                        top_positive = ticker_df.nlargest(3, "correlation")
+                        for _, row in top_positive.iterrows():
+                            st.metric(
+                                row["ticker"],
+                                f"{row['correlation']:.2f}",
+                                "Strong Positive",
+                            )
+
+                    with col2:
+                        st.write("**Strongest Negative**")
+                        top_negative = ticker_df.nsmallest(3, "correlation")
+                        for _, row in top_negative.iterrows():
+                            st.metric(
+                                row["ticker"],
+                                f"{row['correlation']:.2f}",
+                                "Strong Negative",
+                            )
+        else:
+            st.warning("No metrics available for correlation analysis")
 
     def add_trend_analysis(self, df: pd.DataFrame):
         """Add trend analysis section"""
