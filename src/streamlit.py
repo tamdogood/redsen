@@ -20,7 +20,9 @@ class StockSentimentDashboard:
     def setup_page(self):
         """Configure Streamlit page settings"""
         st.set_page_config(
-            page_title="Stock Sentiment Analysis", page_icon="📈", layout="wide"
+            page_title="redsen - Stock Sentiment Analysis",
+            page_icon="📈",
+            layout="wide",
         )
 
         st.title("redsen - Reddit Stock Sentiment Analysis Dashboard")
