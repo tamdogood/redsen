@@ -38,7 +38,8 @@ def main():
         "ValueInvesting",
         "Wallstreetbetsnew",
         "stonks",
-        "scottsstocks",
+        "XGramatikInsights",
+        # "scottsstocks",
     ]
     final_results = []
 
@@ -127,12 +128,12 @@ def main():
                 "submission_sentiment": "mean",
                 "bullish_comments_ratio": "mean",
                 "bearish_comments_ratio": "mean",
-                # Price and Volume Metrics
+                # Price and Volume Metrics (updated to match EnhancedStockAnalyzer output)
                 "current_price": "first",
-                "price_change_2d": "first",
-                "price_change_2w": "first",
-                "avg_volume": "first",
-                "volume_change": "first",
+                "price_change_1d": "first",
+                "price_change_1w": "first",
+                "volume_sma": "first",
+                "volume_ratio": "first",
                 # Technical Indicators
                 "sma_20": "first",
                 "rsi": "first",
@@ -151,45 +152,32 @@ def main():
         .reset_index()
     )
 
-    # Calculate enhanced composite score with available metrics
+    # Update composite score calculation with new column names
     combined_results["composite_score"] = (
         # Social and Sentiment Components (40%)
-        combined_results["num_comments"].rank(pct=True) * 0.15  # Social engagement
-        + combined_results["comment_sentiment_avg"].rank(pct=True)
-        * 0.15  # Combined sentiment
-        + combined_results["bullish_comments_ratio"].rank(pct=True)
-        * 0.10  # Bullish sentiment
+        combined_results["num_comments"].rank(pct=True) * 0.15
+        + combined_results["comment_sentiment_avg"].rank(pct=True) * 0.15
+        + combined_results["bullish_comments_ratio"].rank(pct=True) * 0.10
         +
         # Technical Components (40%)
-        combined_results["volume_change"].rank(pct=True) * 0.15  # Volume activity
-        + combined_results["price_change_2d"].rank(pct=True) * 0.10  # Recent momentum
-        + combined_results["price_change_2w"].rank(pct=True)
-        * 0.15  # Longer-term momentum
+        combined_results["volume_ratio"].rank(pct=True)
+        * 0.15  # Updated from volume_change
+        + combined_results["price_change_1d"].rank(pct=True)
+        * 0.10  # Updated from price_change_2d
+        + combined_results["price_change_1w"].rank(pct=True)
+        * 0.15  # Updated from price_change_2w
         + combined_results["rsi"]
         .apply(lambda x: 1 - abs(50 - x) / 50 if pd.notnull(x) else 0)
         .rank(pct=True)
-        * 0.10  # RSI normalization
+        * 0.10
         +
         # Market Context (10%)
-        combined_results["market_correlation"].rank(pct=True)
-        * 0.10  # Market correlation
+        combined_results["market_correlation"].rank(pct=True) * 0.10
     )
 
-    # Risk-adjusted score using available volatility metric
-    combined_results["risk_adjusted_score"] = combined_results.apply(
-        lambda row: row["composite_score"]
-        / (
-            row["volatility"]
-            if pd.notnull(row["volatility"]) and row["volatility"] != 0
-            else 1
-        ),
-        axis=1,
-    )
-
-    # Get top stocks with multiple ranking methods - simplified to avoid duplicates issue
     top_stocks = combined_results.nlargest(50, "composite_score")
 
-    # Clean up NaN values
+    # Update fill values dictionary with new column names
     fill_values = {
         # Social metrics
         "score": 0,
@@ -201,7 +189,7 @@ def main():
         "bullish_comments_ratio": 0,
         "bearish_comments_ratio": 0,
         # Technical metrics
-        "volume_change": 0,
+        "volume_ratio": 0,  # Updated from volume_change
         "rsi": 50,
         # Composite scores
         "composite_score": 0,
@@ -210,7 +198,6 @@ def main():
         "market_correlation": 0,
     }
 
-    # Replace infinities and fill NaN values
     top_stocks = top_stocks.replace([np.inf, -np.inf], np.nan)
     top_stocks = top_stocks.fillna(fill_values)
 
