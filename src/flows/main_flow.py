@@ -238,3 +238,6 @@ deployment = Deployment.build_from_flow(
 
 if __name__ == "__main__":
     deployment.apply()
+    # prefect server start
+    # python flows/reddit_sentiment_flow.py
+    # prefect worker start -p default-agent-pool
