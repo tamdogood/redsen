@@ -861,7 +861,7 @@ class StockSentimentDashboard:
                             self._display_signal_badge(signal)
 
     def _calculate_signals(self, df: pd.DataFrame) -> dict:
-        """Calculate all technical signals"""
+        """Calculate all technical signals using latest data per ticker"""
         signals = {
             "rsi": {"overbought": [], "oversold": []},
             "volatility": {"high": []},
@@ -870,85 +870,178 @@ class StockSentimentDashboard:
             "all_signals": {},
         }
 
-        for _, row in df.iterrows():
+        # Get the latest data for each ticker
+        latest_data = df.sort_values('analysis_timestamp').groupby('ticker').last().reset_index()
+
+        for _, row in latest_data.iterrows():
             ticker = row["ticker"]
             ticker_signals = []
 
             # RSI Signals
-            if row["rsi"] > 70:
-                signals["rsi"]["overbought"].append((ticker, row["rsi"]))
-                ticker_signals.append(
-                    {"type": "RSI", "signal": "Overbought", "value": row["rsi"]}
-                )
-            elif row["rsi"] < 30:
-                signals["rsi"]["oversold"].append((ticker, row["rsi"]))
-                ticker_signals.append(
-                    {"type": "RSI", "signal": "Oversold", "value": row["rsi"]}
-                )
+            if "rsi" in row and pd.notnull(row["rsi"]):
+                if row["rsi"] > 70:
+                    signals["rsi"]["overbought"].append((ticker, row["rsi"]))
+                    ticker_signals.append(
+                        {"type": "RSI", "signal": "Overbought", "value": row["rsi"]}
+                    )
+                elif row["rsi"] < 30:
+                    signals["rsi"]["oversold"].append((ticker, row["rsi"]))
+                    ticker_signals.append(
+                        {"type": "RSI", "signal": "Oversold", "value": row["rsi"]}
+                    )
 
             # Volatility Signals
-            if row["volatility"] > df["volatility"].quantile(0.75):
-                signals["volatility"]["high"].append((ticker, row["volatility"]))
-                ticker_signals.append(
-                    {"type": "Volatility", "signal": "High", "value": row["volatility"]}
-                )
+            if "volatility" in row and pd.notnull(row["volatility"]):
+                if row["volatility"] > latest_data["volatility"].quantile(0.75):
+                    signals["volatility"]["high"].append((ticker, row["volatility"]))
+                    ticker_signals.append(
+                        {"type": "Volatility", "signal": "High", "value": row["volatility"]}
+                    )
 
             # Volume Signals
-            if row["volume_change"] > 50:
-                signals["volume"]["spike"].append((ticker, row["volume_change"]))
-                ticker_signals.append(
-                    {"type": "Volume", "signal": "Spike", "value": row["volume_change"]}
-                )
+            if "volume_change" in row and pd.notnull(row["volume_change"]):
+                if row["volume_change"] > 50:
+                    signals["volume"]["spike"].append((ticker, row["volume_change"]))
+                    ticker_signals.append(
+                        {"type": "Volume", "signal": "Spike", "value": row["volume_change"]}
+                    )
 
             # Sentiment Signals
-            if row["comment_sentiment_avg"] > df["comment_sentiment_avg"].quantile(0.8):
-                signals["sentiment"]["bullish"].append(
-                    (ticker, row["comment_sentiment_avg"])
-                )
-                ticker_signals.append(
-                    {
-                        "type": "Sentiment",
-                        "signal": "Bullish",
-                        "value": row["comment_sentiment_avg"],
-                    }
-                )
-            elif row["comment_sentiment_avg"] < df["comment_sentiment_avg"].quantile(
-                0.2
-            ):
-                signals["sentiment"]["bearish"].append(
-                    (ticker, row["comment_sentiment_avg"])
-                )
-                ticker_signals.append(
-                    {
-                        "type": "Sentiment",
-                        "signal": "Bearish",
-                        "value": row["comment_sentiment_avg"],
-                    }
-                )
+            if "comment_sentiment_avg" in row and pd.notnull(row["comment_sentiment_avg"]):
+                if row["comment_sentiment_avg"] > latest_data["comment_sentiment_avg"].quantile(0.8):
+                    signals["sentiment"]["bullish"].append(
+                        (ticker, row["comment_sentiment_avg"])
+                    )
+                    ticker_signals.append(
+                        {
+                            "type": "Sentiment",
+                            "signal": "Bullish",
+                            "value": row["comment_sentiment_avg"],
+                        }
+                    )
+                elif row["comment_sentiment_avg"] < latest_data["comment_sentiment_avg"].quantile(0.2):
+                    signals["sentiment"]["bearish"].append(
+                        (ticker, row["comment_sentiment_avg"])
+                    )
+                    ticker_signals.append(
+                        {
+                            "type": "Sentiment",
+                            "signal": "Bearish",
+                            "value": row["comment_sentiment_avg"],
+                        }
+                    )
 
             if ticker_signals:
                 signals["all_signals"][ticker] = ticker_signals
 
         return signals
-
+    
     def _display_rsi_signals(self, rsi_signals: dict):
-        """Display RSI signals with visualization"""
+        """Display RSI signals grouped by ticker with latest data only"""
+        # Get all tickers with RSI signals
+        overbought_tickers = {ticker: rsi for ticker, rsi in rsi_signals["overbought"]}
+        oversold_tickers = {ticker: rsi for ticker, rsi in rsi_signals["oversold"]}
+
+        # Create columns for overbought and oversold
         col1, col2 = st.columns(2)
 
         with col1:
             st.subheader("Overbought Stocks (RSI > 70)")
-            for ticker, rsi in rsi_signals["overbought"]:
-                st.metric(
-                    ticker, f"RSI: {rsi:.1f}", "⚠️ Overbought", delta_color="inverse"
-                )
+            if overbought_tickers:
+                # Create a nice container for the stocks
+                st.markdown("""
+                    <style>
+                    .rsi-box {
+                        padding: 10px;
+                        border-radius: 5px;
+                        margin: 5px 0;
+                        background-color: #ffebee;
+                    }
+                    </style>
+                """, unsafe_allow_html=True)
+                
+                for ticker, rsi in overbought_tickers.items():
+                    with st.container():
+                        st.markdown(f"""
+                            <div class="rsi-box">
+                                <h4 style="margin:0">{ticker}</h4>
+                                <p style="margin:0">RSI: {rsi:.1f}</p>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        st.metric(
+                            label="Status",
+                            value="⚠️ Overbought",
+                            delta=f"RSI: {rsi:.1f}",
+                            delta_color="inverse"
+                        )
+            else:
+                st.info("No overbought stocks found")
 
         with col2:
             st.subheader("Oversold Stocks (RSI < 30)")
-            for ticker, rsi in rsi_signals["oversold"]:
-                st.metric(
-                    ticker, f"RSI: {rsi:.1f}", "💡 Oversold", delta_color="normal"
-                )
+            if oversold_tickers:
+                # Create a nice container for the stocks
+                st.markdown("""
+                    <style>
+                    .rsi-box-oversold {
+                        padding: 10px;
+                        border-radius: 5px;
+                        margin: 5px 0;
+                        background-color: #e8f5e9;
+                    }
+                    </style>
+                """, unsafe_allow_html=True)
+                
+                for ticker, rsi in oversold_tickers.items():
+                    with st.container():
+                        st.markdown(f"""
+                            <div class="rsi-box-oversold">
+                                <h4 style="margin:0">{ticker}</h4>
+                                <p style="margin:0">RSI: {rsi:.1f}</p>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        st.metric(
+                            label="Status",
+                            value="💡 Oversold",
+                            delta=f"RSI: {rsi:.1f}",
+                            delta_color="normal"
+                        )
+            else:
+                st.info("No oversold stocks found")
 
+        # Add a summary table
+        if overbought_tickers or oversold_tickers:
+            st.subheader("RSI Summary Table")
+            summary_data = []
+            
+            for ticker, rsi in overbought_tickers.items():
+                summary_data.append({
+                    "Ticker": ticker,
+                    "RSI": rsi,
+                    "Signal": "Overbought",
+                    "Status": "⚠️"
+                })
+                
+            for ticker, rsi in oversold_tickers.items():
+                summary_data.append({
+                    "Ticker": ticker,
+                    "RSI": rsi,
+                    "Signal": "Oversold",
+                    "Status": "💡"
+                })
+                
+            if summary_data:
+                summary_df = pd.DataFrame(summary_data)
+                st.dataframe(
+                    summary_df.style.format({"RSI": "{:.1f}"}),
+                    hide_index=True,
+                    column_config={
+                        "Ticker": st.column_config.TextColumn("Ticker", width="medium"),
+                        "RSI": st.column_config.NumberColumn("RSI", format="%.1f"),
+                        "Signal": st.column_config.TextColumn("Signal", width="medium"),
+                        "Status": st.column_config.TextColumn("Status", width="small"),
+                    }
+                )
     def _display_volatility_signals(self, volatility_signals: dict):
         """Display volatility signals"""
         st.subheader("High Volatility Stocks")
