@@ -15,7 +15,7 @@ from utils.logging_config import logger
 from openai import OpenAI
 import json
 import os
-from utils.types import SentimentAnalysisResult
+from connectors.polygon_connector import PolygonConnector
 import ta
 from ta.trend import MACD
 from ta.momentum import StochasticOscillator
@@ -42,20 +42,26 @@ class EnhancedStockAnalyzer:
     ):
         """Initialize the analyzer with API credentials"""
         self.reddit = praw.Reddit(
-            client_id=client_id, client_secret=client_secret, user_agent=user_agent
+            client_id=client_id,
+            client_secret=client_secret,
+            user_agent=user_agent
         )
 
         self.db = SupabaseConnector(
             supabase_url=supabase_url, supabase_key=supabase_key
         )
-
+        self.market_data = PolygonConnector(os.getenv("POLYGON_API_KEY", ""))
         # Initialize OpenAI client (do this in __init__ if used frequently)
         self.openai_client = OpenAI(
             api_key=os.getenv("OPENAI_API_KEY", ""),
         )
 
         self.sia = SentimentIntensityAnalyzer()
+        
+        # Initialize caches
         self.stock_data_cache = {}
+        self.market_indicators_cache = {}
+        self.sector_performance_cache = {}
 
         # Add known invalid tickers/common words to filter out
         self.invalid_tickers = {
@@ -155,33 +161,29 @@ class EnhancedStockAnalyzer:
             "CFO",
             "LG",
             "TWS",
+            "LFG",
+            "WB",
+            "COVID",
+            "HYSA",
+            "CHAT",
+            "HOME",
         }
 
         self.market_indicators_cache = {}
         self.sector_performance_cache = {}
 
     def is_valid_ticker(self, ticker: str) -> bool:
-        """
-        Check if a ticker symbol is likely to be valid
-
-        Args:
-            ticker (str): Potential stock ticker
-
-        Returns:
-            bool: True if likely valid, False otherwise
-        """
+        """Check if a ticker symbol is valid using Polygon API"""
         if ticker in self.invalid_tickers:
             return False
-
+            
         try:
-            info = yf.Ticker(ticker).history(period="1mo", interval="1d")
-
-            return len(info) > 0
-
+            result = self.market_data.is_valid_ticker(ticker)
+            return result
         except Exception as e:
             logger.warning(f"Ticker validation failed for {ticker}: {str(e)}")
             return False
-
+            
     def extract_stock_tickers(self, text: str) -> List[str]:
         """
         Extract stock tickers using OpenAI with fallback to regex
@@ -301,60 +303,58 @@ class EnhancedStockAnalyzer:
         return list(set(tickers))  # Remove duplicates
 
     def get_stock_metrics(self, ticker: str) -> Optional[Dict]:
-        """Enhanced stock metrics with additional technical and fundamental indicators"""
+        """Get comprehensive stock metrics using Polygon data"""
         try:
-            if ticker in self.stock_data_cache:
-                return self.stock_data_cache[ticker]
+            # Check cache first
+            # if ticker in self.stock_data_cache:
+                # return self.stock_data_cache[ticker]
 
-            stock = yf.Ticker(ticker)
-
-            # Get historical data with more history for better indicators
-            hist = stock.history(period="6mo")  # Extended from 1mo to 6mo
-
-            if hist.empty or len(hist) < 20:
+            # Get stock data from Polygon
+            stock_data = self.market_data.get_stock_data(ticker, days=180)  # 6 months of data
+            if not stock_data or stock_data['history'].empty:
                 return None
+
+            hist = stock_data['history']
+            info = stock_data['info']
 
             metrics = {}
 
-            # Price metrics
+            # Calculate various metrics
             price_metrics = self._calculate_price_metrics(hist)
-            metrics.update(price_metrics)
-
-            # Volume metrics
             volume_metrics = self._calculate_volume_metrics(hist)
-            metrics.update(volume_metrics)
-
-            # Technical indicators
             technical_metrics = self._calculate_technical_indicators(hist)
-            metrics.update(technical_metrics)
-
-            # Volatility metrics
             volatility_metrics = self._calculate_volatility_metrics(hist)
-            metrics.update(volatility_metrics)
-
-            # Momentum indicators
             momentum_metrics = self._calculate_momentum_indicators(hist)
-            metrics.update(momentum_metrics)
-
-            # Market context
             market_metrics = self._get_market_context(ticker)
+
+            # Combine all metrics
+            metrics.update(price_metrics)
+            metrics.update(volume_metrics)
+            metrics.update(technical_metrics)
+            metrics.update(volatility_metrics)
+            metrics.update(momentum_metrics)
             metrics.update(market_metrics)
 
-            # Fundamental metrics
-            fundamental_metrics = self._get_fundamental_metrics(stock)
+            # Add fundamental metrics from Polygon details
+            fundamental_metrics = {
+                "market_cap": info.get("market_cap"),
+                "shares_outstanding": info.get("share_class_shares_outstanding"),
+                "sector": info.get("sector"),
+                "industry": info.get("industry"),
+                "description": info.get("description"),
+                "exchange": info.get("primary_exchange"),
+                "type": info.get("type")
+            }
             metrics.update(fundamental_metrics)
 
-            # Options metrics
-            options_metrics = self._calculate_options_metrics(stock)
-            metrics.update(options_metrics)
-
-            self.stock_data_cache[ticker] = metrics
+            # Cache the results
+            # self.stock_data_cache[ticker] = metrics
             return metrics
 
         except Exception as e:
             logger.error(f"Error calculating metrics for {ticker}: {str(e)}")
             return None
-
+        
     def _calculate_price_metrics(self, hist: pd.DataFrame) -> Dict:
         """Calculate comprehensive price-based metrics"""
         metrics = {}
@@ -483,28 +483,34 @@ class EnhancedStockAnalyzer:
         return metrics
 
     def _get_market_context(self, ticker: str) -> Dict:
-        """Get market context metrics"""
-        metrics = {}
+        """Get market context metrics using Polygon data"""
         try:
+            # # Check cache first
+            # cache_key = f"market_context_{ticker}"
+            # cached_data = self.cache.get(cache_key)
+            # if cached_data:
+            #     return cached_data
+
+            metrics = {}
+
             # Get sector performance
             sector_data = self._get_sector_performance(ticker)
-
-            # Get market indicators
             market_indicators = self._get_market_indicators()
 
-            metrics.update(
-                {
-                    "sector_performance": sector_data,
-                    "market_indicators": market_indicators,
-                    "relative_strength": self._calculate_relative_strength(ticker),
-                    "beta": self._calculate_beta(ticker),
-                }
-            )
+            metrics.update({
+                "sector_performance": sector_data,
+                "market_indicators": market_indicators,
+                "relative_strength": self._calculate_relative_strength(ticker),
+                "beta": self._calculate_beta(ticker)
+            })
+
+            # Cache the results
+            # self.cache.set(cache_key, metrics, ttl=3600)  # Cache for 1 hour
+            return metrics
 
         except Exception as e:
             logger.error(f"Error in market context calculation: {str(e)}")
-
-        return metrics
+            return {}
 
     def _calculate_options_metrics(self, stock) -> Dict:
         """Calculate options-based indicators"""
@@ -544,21 +550,23 @@ class EnhancedStockAnalyzer:
         return metrics
 
     def _calculate_relative_strength(self, ticker: str) -> float:
-        """Calculate relative strength compared to market"""
+        """Calculate relative strength compared to market using Polygon data"""
         try:
-            stock = yf.Ticker(ticker)
-            spy = yf.Ticker("SPY")
+            # Get stock and market data
+            stock_data = self.market_data.get_stock_data(ticker, days=180)
+            spy_data = self.market_data.get_stock_data("SPY", days=180)
 
-            # Get 6 months of data
-            stock_hist = stock.history(period="6mo")["Close"]
-            market_hist = spy.history(period="6mo")["Close"]
+            if not stock_data or not spy_data:
+                return 0.0
 
-            # Calculate relative strength
+            stock_hist = stock_data['history']['Close']
+            market_hist = spy_data['history']['Close']
+
+            # Calculate returns
             stock_returns = stock_hist.pct_change()
             market_returns = market_hist.pct_change()
 
             relative_strength = (stock_returns.mean() / market_returns.mean()) * 100
-
             return round(relative_strength, 2)
 
         except Exception as e:
@@ -566,44 +574,57 @@ class EnhancedStockAnalyzer:
             return 0.0
 
     def _calculate_beta(self, ticker: str) -> float:
-        """Calculate beta coefficient with proper date alignment"""
+        """Calculate beta coefficient using Polygon data"""
         try:
-            stock = yf.Ticker(ticker)
-            spy = yf.Ticker("SPY")
-
-            # Get daily returns with matching date range
+            # Get one year of daily data
             end_date = dt.datetime.now()
-            start_date = end_date - dt.timedelta(days=365)  # Use 1 year of data
+            start_date = end_date - dt.timedelta(days=7)
 
-            # Download data with matching dates
-            stock_data = stock.history(start=start_date, end=end_date)
-            market_data = spy.history(start=start_date, end=end_date)
-
-            # Calculate returns and align dates
-            stock_returns = stock_data["Close"].pct_change().dropna()
-            market_returns = market_data["Close"].pct_change().dropna()
-
-            # Align the data using dates as index
-            aligned_data = pd.concat(
-                [stock_returns, market_returns], axis=1, join="inner"
+            stock_data = self.market_data.get_aggregates(
+                ticker=ticker,
+                multiplier=1,
+                timespan="day",
+                from_date=start_date.strftime("%Y-%m-%d"),
+                to_date=end_date.strftime("%Y-%m-%d")
             )
-            aligned_data.columns = ["stock", "market"]
+
+            spy_data = self.market_data.get_aggregates(
+                ticker="SPY",
+                multiplier=1,
+                timespan="day",
+                from_date=start_date.strftime("%Y-%m-%d"),
+                to_date=end_date.strftime("%Y-%m-%d")
+            )
+
+            if stock_data is None or spy_data is None:
+                return 1.0
+
+            # Access the 'close' column (lowercase) directly from the DataFrame
+            stock_returns = stock_data['close'].pct_change().dropna()
+            market_returns = spy_data['close'].pct_change().dropna()
+
+            # Align the data
+            aligned_data = pd.concat(
+                [stock_returns, market_returns],
+                axis=1,
+                join='inner'
+            )
+            aligned_data.columns = ['stock', 'market']
 
             if len(aligned_data) < 30:  # Require at least 30 data points
                 return 1.0
 
-            # Calculate beta using aligned data
-            covariance = aligned_data["stock"].cov(aligned_data["market"])
-            market_variance = aligned_data["market"].var()
-
+            # Calculate beta
+            covariance = aligned_data['stock'].cov(aligned_data['market'])
+            market_variance = aligned_data['market'].var()
             beta = covariance / market_variance if market_variance != 0 else 1.0
 
-            return round(min(max(beta, -10), 10), 2)  # Clip beta to reasonable range
+            return round(min(max(beta, -10), 10), 2)  # Clamp between -10 and 10
 
         except Exception as e:
             logger.error(f"Error calculating beta: {str(e)}")
-            return 1.0
-
+            return 1.0  # Return neutral beta on error
+        
     def _identify_price_trend(self, prices: pd.Series) -> str:
         """Identify price trend using multiple timeframes"""
         try:
@@ -782,8 +803,8 @@ class EnhancedStockAnalyzer:
     def _get_sector_performance(self, ticker: str) -> Dict:
         """Get sector and industry performance metrics"""
         try:
-            if ticker in self.sector_performance_cache:
-                return self.sector_performance_cache[ticker]
+            # if ticker in self.sector_performance_cache:
+                # return self.sector_performance_cache[ticker]
 
             stock = yf.Ticker(ticker)
             info = stock.info
@@ -824,7 +845,7 @@ class EnhancedStockAnalyzer:
                 ),
             }
 
-            self.sector_performance_cache[ticker] = sector_metrics
+            # self.sector_performance_cache[ticker] = sector_metrics
             return sector_metrics
 
         except Exception as e:
@@ -832,118 +853,110 @@ class EnhancedStockAnalyzer:
             return {}
 
     def _get_market_indicators(self) -> Dict:
-        """Get broad market indicators"""
+        """Get broad market indicators using Polygon data with fallback options"""
         try:
-            # Check cache first
-            cache_key = dt.datetime.now().strftime("%Y-%m-%d")
-            if cache_key in self.market_indicators_cache:
-                return self.market_indicators_cache[cache_key]
+            # Check cache
+            # if cache_key in self.market_indicators_cache:
+                # return self.market_indicators_cache[cache_key]
 
-            # Get market data
-            spy = yf.Ticker("SPY")
-            vix = yf.Ticker("^VIX")
+            # Get market data for SPY
+            spy_data = self.market_data.get_stock_data("SPY", days=30)
+            if not spy_data:
+                return {}
 
-            spy_hist = spy.history(period="1mo")
-            vix_hist = vix.history(period="1mo")
+            spy_hist = spy_data['history']
+
+            # Calculate implied volatility using SPY data instead of VIX
+            returns = spy_hist['Close'].pct_change().dropna()
+            implied_volatility = returns.std() * np.sqrt(252) * 100  # Annualized volatility
 
             market_metrics = {
-                "market_trend": self._identify_price_trend(spy_hist["Close"]),
-                "market_volatility": round(vix_hist["Close"].iloc[-1], 2),
-                "market_momentum": round(ta.momentum.rsi(spy_hist["Close"]), 2),
+                "market_trend": self._identify_price_trend(spy_hist['Close']),
+                "market_volatility": round(implied_volatility, 2),
+                "market_momentum": round(ta.momentum.rsi(spy_hist['Close']), 2),
                 "market_breadth": self._calculate_market_breadth(),
-                "market_sentiment": self._calculate_market_sentiment(
-                    vix_hist["Close"].iloc[-1]
-                ),
+                "market_sentiment": self._calculate_market_sentiment_alternative(implied_volatility)
             }
 
-            self.market_indicators_cache[cache_key] = market_metrics
+            # self.market_indicators_cache[cache_key] = market_metrics
             return market_metrics
 
         except Exception as e:
             logger.error(f"Error getting market indicators: {str(e)}")
             return {}
 
+    def _calculate_market_sentiment_alternative(self, volatility: float) -> str:
+        """Calculate market sentiment based on SPY volatility instead of VIX"""
+        # Typically, VIX values are about 1.2x the implied volatility calculated from SPY
+        # So we'll adjust our thresholds accordingly
+        adjusted_volatility = volatility * 1.2
+        
+        if adjusted_volatility >= 35:
+            return "Extremely Fearful"
+        elif adjusted_volatility >= 30:
+            return "Fearful"
+        elif adjusted_volatility >= 25:
+            return "Neutral"
+        elif adjusted_volatility >= 15:
+            return "Complacent"
+        else:
+            return "Extremely Complacent"
+        
     def _calculate_market_breadth(self) -> Dict:
-        """Calculate market breadth using S&P 500 components instead of NYSE advance-decline"""
+        """Calculate market breadth using major index components"""
         try:
-            # Use SPY and its components for market breadth
-            spy = yf.Ticker("SPY")
-            spy_holdings = spy.get_info().get("holdings", [])
+            major_tickers = [
+                "AAPL", "MSFT", "AMZN", "GOOGL", "META",
+                "NVDA", "BRK.B", "JPM", "JNJ", "V"
+            ]
 
-            # If we can't get holdings, use a list of major index components
-            if not spy_holdings:
-                major_tickers = [
-                    "AAPL",
-                    "MSFT",
-                    "AMZN",
-                    "GOOGL",
-                    "META",
-                    "NVDA",
-                    "BRK-B",
-                    "JPM",
-                    "JNJ",
-                    "V",
-                    "PG",
-                    "HD",
-                    "BAC",
-                    "MA",
-                    "DIS",
-                    "ADBE",
-                    "CRM",
-                    "NFLX",
-                    "CSCO",
-                    "VZ",
-                ]
+            advancing = 0
+            declining = 0
 
-                results = {}
-                advancing = 0
-                declining = 0
+            for ticker in major_tickers:
+                try:
+                    data = self.market_data.get_stock_data(ticker, days=5)
+                    if data and len(data['history']) >= 2:
+                        hist = data['history']
+                        price_change = ((hist['Close'].iloc[-1] - hist['Close'].iloc[-2]) 
+                                    / hist['Close'].iloc[-2])
+                        
+                        if price_change > 0:
+                            advancing += 1
+                        elif price_change < 0:
+                            declining += 1
+                except Exception:
+                    continue
 
-                for ticker in major_tickers:
-                    try:
-                        stock = yf.Ticker(ticker)
-                        hist = stock.history(period="5d")  # Get 5 days of data
-
-                        if len(hist) >= 2:  # Need at least 2 days for price change
-                            price_change = (
-                                hist["Close"].iloc[-1] - hist["Close"].iloc[-2]
-                            ) / hist["Close"].iloc[-2]
-                            if price_change > 0:
-                                advancing += 1
-                            elif price_change < 0:
-                                declining += 1
-                    except Exception:
-                        continue
-
-                total_stocks = advancing + declining
-                if total_stocks == 0:
-                    return {
-                        "advance_decline_ratio": 1.0,
-                        "breadth_trend": "Neutral",
-                        "advancing_stocks": 0,
-                        "declining_stocks": 0,
-                    }
-
-                ad_ratio = advancing / total_stocks if total_stocks > 0 else 1.0
-
-                # Determine trend
-                if ad_ratio > 0.65:
-                    trend = "Strongly Positive"
-                elif ad_ratio > 0.55:
-                    trend = "Positive"
-                elif ad_ratio < 0.35:
-                    trend = "Strongly Negative"
-                elif ad_ratio < 0.45:
-                    trend = "Negative"
-                else:
-                    trend = "Neutral"
-
+            total_stocks = advancing + declining
+            if total_stocks == 0:
                 return {
-                    "advance_decline_ratio": round(ad_ratio, 2),
-                    "breadth_trend": trend,
-                    "advancing_stocks": advancing,
-                    "declining_stocks": declining,
+                    "advance_decline_ratio": 1.0,
+                    "breadth_trend": "Neutral",
+                    "advancing_stocks": 0,
+                    "declining_stocks": 0
                 }
+
+            ad_ratio = advancing / total_stocks if total_stocks > 0 else 1.0
+
+            # Determine trend
+            if ad_ratio > 0.65:
+                trend = "Strongly Positive"
+            elif ad_ratio > 0.55:
+                trend = "Positive"
+            elif ad_ratio < 0.35:
+                trend = "Strongly Negative"
+            elif ad_ratio < 0.45:
+                trend = "Negative"
+            else:
+                trend = "Neutral"
+
+            return {
+                "advance_decline_ratio": round(ad_ratio, 2),
+                "breadth_trend": trend,
+                "advancing_stocks": advancing,
+                "declining_stocks": declining
+            }
 
         except Exception as e:
             logger.error(f"Error calculating market breadth: {str(e)}")
@@ -951,9 +964,9 @@ class EnhancedStockAnalyzer:
                 "advance_decline_ratio": 1.0,
                 "breadth_trend": "Neutral",
                 "advancing_stocks": 0,
-                "declining_stocks": 0,
+                "declining_stocks": 0
             }
-
+                
     def _calculate_market_sentiment(self, vix_level: float) -> str:
         """Calculate market sentiment based on VIX"""
         if vix_level >= 30:
@@ -1202,17 +1215,20 @@ class EnhancedStockAnalyzer:
         rs = gain / loss
         return 100 - (100 / (1 + rs.iloc[-1]))
 
-    def _get_fundamental_metrics(self, stock) -> Dict:
+    def _get_fundamental_metrics(self, ticker: str) -> Dict:
         """Get fundamental metrics for a stock"""
         try:
-            info = stock.info
+            # Get financial ratios from Polygon
+            ratios = self.market_data.get_financial_ratios(ticker)
+            
             return {
-                "market_cap": info.get("marketCap"),
-                "pe_ratio": info.get("forwardPE"),
-                "beta": info.get("beta"),
-                "dividend_yield": info.get("dividendYield"),
-                "profit_margins": info.get("profitMargins"),
-                "revenue_growth": info.get("revenueGrowth"),
+                "market_cap": self.market_data.get_market_cap(ticker),
+                "pe_ratio": ratios.get("pe_ratio"),
+                "price_to_book": ratios.get("price_to_book"),
+                "debt_to_equity": ratios.get("debt_to_equity"),
+                "current_ratio": ratios.get("current_ratio"),
+                "profit_margin": ratios.get("profit_margin"),
+                "roe": ratios.get("roe")
             }
         except Exception as e:
             logger.warning(f"Error fetching fundamental metrics: {str(e)}")
@@ -2308,6 +2324,10 @@ class EnhancedStockAnalyzer:
         Returns:
             Dict: Operation status and results
         """
+        if os.getenv("DB_WRITE", False) != "true":
+            logger.warning("DB_WRITE environment variable not set to 'true'")
+            return {"success": False, "error": "DB_WRITE not enabled"}
+        
         if df.empty:
             logger.warning("No results to save")
             return {"success": False, "error": "Empty DataFrame provided"}

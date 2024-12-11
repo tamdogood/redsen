@@ -6,6 +6,7 @@ from utils.logging_config import logger
 import datetime as dt
 import json
 import numpy as np
+import os
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -29,6 +30,7 @@ class SupabaseConnector:
     def __init__(self, supabase_url: str, supabase_key: str):
         """Initialize Supabase connection"""
         self.supabase: Client = create_client(supabase_url, supabase_key)
+        self.write_controller = os.getenv("DB_WRITE", False)
 
     def _convert_to_json_serializable(self, obj: any) -> any:
         """Convert values to JSON serializable format"""
@@ -46,6 +48,8 @@ class SupabaseConnector:
 
     def save_sentiment_analysis(self, sentiment_data: pd.DataFrame) -> Dict:
         """Save enhanced sentiment analysis results to Supabase"""
+        if self.write_controller == "False":
+            return {"success": False, "error": "Write controller is disabled"}
         try:
             if sentiment_data.empty:
                 return {"success": False, "error": "Empty DataFrame provided"}
@@ -93,11 +97,11 @@ class SupabaseConnector:
                     "current_price": self._convert_to_json_serializable(
                         record.get("current_price")
                     ),
-                    "price_change_2w": self._convert_to_json_serializable(
-                        record.get("price_change_2w")
+                    "price_change_1w": self._convert_to_json_serializable(
+                        record.get("price_change_1w")
                     ),
-                    "price_change_2d": self._convert_to_json_serializable(
-                        record.get("price_change_2d")
+                    "price_change_1d": self._convert_to_json_serializable(
+                        record.get("price_change_1d")
                     ),
                     # Volume metrics
                     "avg_volume": self._convert_to_json_serializable(
@@ -219,6 +223,8 @@ class SupabaseConnector:
 
     def save_post_data(self, post_data: Dict) -> Dict:
         """Save post data to Supabase tables with improved error handling"""
+        if self.write_controller == "False":
+            return {"success": False, "error": "Write controller is disabled"}
         try:
             # Validate required fields
             required_fields = ["post_id", "title", "subreddit"]
@@ -376,8 +382,8 @@ class SupabaseConnector:
                 "bullish_comments_ratio",
                 "bearish_comments_ratio",
                 "sentiment_confidence",
-                "price_change_2d",
-                "price_change_2w",
+                "price_change_1d",
+                "price_change_1w",
                 "volume_change",
                 "composite_score",
                 "sentiment_score",
@@ -658,6 +664,8 @@ class SupabaseConnector:
         Returns:
             Dict with operation status
         """
+        if self.write_controller == "False":
+            return {"success": False, "error": "Write controller is disabled"}
         try:
             content = file_data.get("content")
             path = file_data.get("path")
@@ -702,6 +710,8 @@ class SupabaseConnector:
         Returns:
             Dict with operation results
         """
+        if self.write_controller == "False":
+            return {"success": False, "error": "Write controller is disabled"}
         if df.empty:
             return {"success": False, "error": "Empty DataFrame provided"}
 
@@ -764,8 +774,8 @@ class SupabaseConnector:
                 "most_active": df.nlargest(5, "num_comments")[
                     ["ticker", "num_comments"]
                 ].to_dict(orient="records"),
-                "best_performing": df.nlargest(5, "price_change_2w")[
-                    ["ticker", "price_change_2w"]
+                "best_performing": df.nlargest(5, "price_change_1w")[
+                    ["ticker", "price_change_1w"]
                 ].to_dict(orient="records"),
             }
 
@@ -821,6 +831,8 @@ class SupabaseConnector:
         Returns:
             Dict with operation results
         """
+        if self.write_controller == "False":
+            return {"success": False, "error": "Write controller is disabled"}
         if df.empty:
             return {"success": False, "error": "Empty DataFrame provided"}
 
@@ -885,8 +897,8 @@ class SupabaseConnector:
                 "most_active": df.nlargest(5, "num_comments")[
                     ["ticker", "num_comments"]
                 ].to_dict(orient="records"),
-                "best_performing": df.nlargest(5, "price_change_2w")[
-                    ["ticker", "price_change_2w"]
+                "best_performing": df.nlargest(5, "price_change_1w")[
+                    ["ticker", "price_change_1w"]
                 ].to_dict(orient="records"),
             }
 
