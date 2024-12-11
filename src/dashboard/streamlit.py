@@ -1628,28 +1628,154 @@ class StockSentimentDashboard:
                 f"Not enough data points for {ticker} to perform correlation analysis. Need at least 5 data points."
             )
 
+    def _display_signal_summary(self, signal_data: dict):
+        """Display comprehensive signal summary grouped by ticker with latest data"""
+        st.subheader("Signal Summary")
+        
+        if not signal_data["all_signals"]:
+            st.info("No signals detected")
+            return
+
+        # Create a list of all signals with their tickers
+        all_ticker_signals = []
+        
+        for ticker, signals in signal_data["all_signals"].items():
+            signals_by_type = {
+                "RSI": None,
+                "Volatility": None,
+                "Volume": None,
+                "Sentiment": None
+            }
+            
+            for signal in signals:
+                signals_by_type[signal['type']] = {
+                    'signal': signal['signal'],
+                    'value': signal['value']
+                }
+            
+            all_ticker_signals.append({
+                'Ticker': ticker,
+                'RSI': signals_by_type['RSI'],
+                'Volatility': signals_by_type['Volatility'],
+                'Volume': signals_by_type['Volume'],
+                'Sentiment': signals_by_type['Sentiment']
+            })
+
+        # Convert to DataFrame for display
+        df = pd.DataFrame(all_ticker_signals)
+        
+        # Custom formatting function for signals
+        def format_signal(signal_info):
+            if signal_info is None:
+                return ""
+            return f"{signal_info['signal']} ({signal_info['value']:.1f})"
+
+        # Create styled dataframe
+        styled_df = pd.DataFrame({
+            'Ticker': df['Ticker'],
+            'RSI': df['RSI'].apply(format_signal),
+            'Volatility': df['Volatility'].apply(format_signal),
+            'Volume': df['Volume'].apply(format_signal),
+            'Sentiment': df['Sentiment'].apply(format_signal)
+        })
+
+        # Display as an interactive table
+        st.dataframe(
+            styled_df,
+            hide_index=True,
+            column_config={
+                "Ticker": st.column_config.TextColumn(
+                    "Ticker",
+                    help="Stock ticker symbol",
+                    width="small"
+                ),
+                "RSI": st.column_config.TextColumn(
+                    "RSI Signal",
+                    help="Relative Strength Index signals",
+                    width="medium"
+                ),
+                "Volatility": st.column_config.TextColumn(
+                    "Volatility Signal",
+                    help="Volatility-based signals",
+                    width="medium"
+                ),
+                "Volume": st.column_config.TextColumn(
+                    "Volume Signal",
+                    help="Volume-based signals",
+                    width="medium"
+                ),
+                "Sentiment": st.column_config.TextColumn(
+                    "Sentiment Signal",
+                    help="Sentiment-based signals",
+                    width="medium"
+                )
+            }
+        )
+
+        # Add expandable details for each ticker
+        for ticker in df['Ticker']:
+            with st.expander(f"🔍 Details for {ticker}"):
+                signals = signal_data["all_signals"][ticker]
+                
+                # Create columns for different signal types
+                cols = st.columns(len(signals))
+                
+                for signal, col in zip(signals, cols):
+                    with col:
+                        color = {
+                            "RSI": "#FF9800",
+                            "Volatility": "#2196F3",
+                            "Volume": "#4CAF50",
+                            "Sentiment": "#9C27B0"
+                        }.get(signal['type'], "#666666")
+                        
+                        icon = {
+                            "Overbought": "⚠️",
+                            "Oversold": "💡",
+                            "High": "📈",
+                            "Spike": "🔊",
+                            "Bullish": "🚀",
+                            "Bearish": "📉"
+                        }.get(signal['signal'], "•")
+                        
+                        st.markdown(f"""
+                            <div style="
+                                padding: 10px;
+                                border-radius: 5px;
+                                background-color: {color}22;
+                                border: 1px solid {color};
+                            ">
+                                <p style="color: {color}; margin:0; font-weight:bold;">
+                                    {icon} {signal['type']}
+                                </p>
+                                <p style="margin:0;">
+                                    {signal['signal']}: {signal['value']:.1f}
+                                </p>
+                            </div>
+                        """, unsafe_allow_html=True)
+
     def show_stock_details(self, ticker: str):
-        """Enhanced stock details with correlation analysis"""
+        """Enhanced stock details with updated signal summary"""
         stock_data = self.get_stock_data(ticker)
         if stock_data.empty:
             st.warning(f"No data available for {ticker}")
             return
 
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(
-            [
-                "Overview",
-                "Technical Analysis",
-                "Social Sentiment",
-                "Correlation Analysis",
-                "Advanced Metrics",
-            ]
-        )
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "Overview",
+            "Technical Analysis",
+            "Social Sentiment",
+            "Correlation Analysis",
+            "Advanced Metrics"
+        ])
 
         with tab1:
             self.show_overview_tab(stock_data)
 
         with tab2:
             self.show_technical_tab(stock_data)
+            signals = self._calculate_signals(stock_data)
+            self._display_signal_summary(signals)  # Add signal summary to technical tab
 
         with tab3:
             self.show_sentiment_tab(stock_data, ticker)
@@ -1659,7 +1785,6 @@ class StockSentimentDashboard:
 
         with tab5:
             self.show_advanced_metrics_tab(stock_data, ticker)
-
 
 if __name__ == "__main__":
     load_dotenv()
