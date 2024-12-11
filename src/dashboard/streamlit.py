@@ -36,7 +36,7 @@ class StockSentimentDashboard:
             st.metric(
                 "Current Price",
                 f"${latest['current_price']:.2f}",
-                f"{latest['price_change_1w']:.1f}%",
+                f"{latest['price_change_2w']:.1f}%",
             )
 
         with col2:
@@ -305,7 +305,7 @@ class StockSentimentDashboard:
             "Avg Market Sentiment": df["comment_sentiment_avg"].mean(),
             "Most Discussed": df.nlargest(1, "num_comments")["ticker"].iloc[0],
             "Most Bullish": df.nlargest(1, "comment_sentiment_avg")["ticker"].iloc[0],
-            "Best Performer": df.nlargest(1, "price_change_1w")["ticker"].iloc[0],
+            "Best Performer": df.nlargest(1, "price_change_2w")["ticker"].iloc[0],
         }
 
         cols = st.columns(len(metrics))
@@ -320,8 +320,8 @@ class StockSentimentDashboard:
         correlation_groups = {
             "Price & Returns": [
                 "current_price",
-                "price_change_1w",
-                "price_change_1d",
+                "price_change_2w",
+                "price_change_2d",
                 "volume_change",
             ],
             "Technical Indicators": ["rsi", "volatility", "sma_20", "volume_change"],
@@ -355,9 +355,9 @@ class StockSentimentDashboard:
         # Calculate important correlations
         key_pairs = [
             {
-                "pair": ("comment_sentiment_avg", "price_change_1w"),
+                "pair": ("comment_sentiment_avg", "price_change_2w"),
                 "name": "Sentiment vs Price Change",
-                "description": "Relationship between sentiment and 1-week price movement",
+                "description": "Relationship between sentiment and 2-week price movement",
             },
             {
                 "pair": ("bullish_comments_ratio", "volume_change"),
@@ -660,13 +660,13 @@ class StockSentimentDashboard:
             fig = px.scatter(
                 df,
                 x="volume_change",
-                y="price_change_1w",
+                y="price_change_2w",
                 color="comment_sentiment_avg",
                 title="Volume Change vs Price Change",
                 hover_data=["ticker"],
                 labels={
                     "volume_change": "Volume Change (%)",
-                    "price_change_1w": "Price Change (%)",
+                    "price_change_2w": "Price Change (%)",
                     "comment_sentiment_avg": "Sentiment Score",
                 },
             )
@@ -694,8 +694,8 @@ class StockSentimentDashboard:
         with col2:
             st.metric(
                 "Average Price Change",
-                f"{df['price_change_1w'].mean():.1f}%",
-                f"{df['price_change_1w'].std():.1f}% σ",
+                f"{df['price_change_2w'].mean():.1f}%",
+                f"{df['price_change_2w'].std():.1f}% σ",
             )
 
         with col3:
@@ -713,7 +713,7 @@ class StockSentimentDashboard:
                 {
                     "comment_sentiment_avg": "mean",
                     "num_comments": "sum",
-                    "price_change_1w": "mean",
+                    "price_change_2w": "mean",
                 }
             )
             .reset_index()
@@ -734,7 +734,7 @@ class StockSentimentDashboard:
         fig.add_trace(
             go.Scatter(
                 x=sentiment_over_time["analysis_timestamp"],
-                y=sentiment_over_time["price_change_1w"],
+                y=sentiment_over_time["price_change_2w"],
                 name="Average Price Change",
                 line=dict(color="red"),
             ),
@@ -755,7 +755,7 @@ class StockSentimentDashboard:
         fig = go.Figure()
 
         # Positive performers
-        positive_mask = df["price_change_1w"] > 0
+        positive_mask = df["price_change_2w"] > 0
         fig.add_trace(
             go.Histogram(
                 x=df[positive_mask]["comment_sentiment_avg"],
@@ -766,7 +766,7 @@ class StockSentimentDashboard:
         )
 
         # Negative performers
-        negative_mask = df["price_change_1w"] <= 0
+        negative_mask = df["price_change_2w"] <= 0
         fig.add_trace(
             go.Histogram(
                 x=df[negative_mask]["comment_sentiment_avg"],
@@ -808,7 +808,7 @@ class StockSentimentDashboard:
                 {
                     "comment_sentiment_avg": "mean",
                     "num_comments": "sum",
-                    "price_change_1w": "mean",
+                    "price_change_2w": "mean",
                 }
             )
             .reset_index()
@@ -1036,19 +1036,19 @@ class StockSentimentDashboard:
         )
 
         # Create layout with two tabs for different timeframes
-        timeframe_tab1, timeframe_tab2 = st.tabs(["1-Day Analysis", "1-Week Analysis"])
+        timeframe_tab1, timeframe_tab2 = st.tabs(["2-Day Analysis", "2-Week Analysis"])
 
         with timeframe_tab1:
             col1, col2 = st.columns(2)
 
             with col1:
-                # Average 1-day price change by sentiment category
-                avg_price_change_1d = (
-                    df.groupby("sentiment_category")["price_change_1d"].mean().round(2)
+                # Average 2-day price change by sentiment category
+                avg_price_change_2d = (
+                    df.groupby("sentiment_category")["price_change_2d"].mean().round(2)
                 )
                 fig = px.bar(
-                    avg_price_change_1d,
-                    title="Average 1-Day Price Change by Sentiment Category",
+                    avg_price_change_2d,
+                    title="Average 2-Day Price Change by Sentiment Category",
                     labels={
                         "sentiment_category": "Sentiment",
                         "value": "Average Price Change (%)",
@@ -1058,17 +1058,17 @@ class StockSentimentDashboard:
                 st.plotly_chart(fig, use_container_width=True)
 
             with col2:
-                # Bullish/Bearish ratio impact (1-day)
+                # Bullish/Bearish ratio impact (2-day)
                 fig = px.scatter(
                     df,
                     x="bullish_comments_ratio",
-                    y="price_change_1d",
+                    y="price_change_2d",
                     color="comment_sentiment_avg",
                     hover_data=["ticker"],
-                    title="Bullish Ratio vs 1-Day Price Change",
+                    title="Bullish Ratio vs 2-Day Price Change",
                     labels={
                         "bullish_comments_ratio": "Bullish Comments Ratio",
-                        "price_change_1d": "1-Day Price Change (%)",
+                        "price_change_2d": "2-Day Price Change (%)",
                         "comment_sentiment_avg": "Overall Sentiment",
                     },
                 )
@@ -1078,13 +1078,13 @@ class StockSentimentDashboard:
             col1, col2 = st.columns(2)
 
             with col1:
-                # Average 1-week price change by sentiment category
-                avg_price_change_1w = (
-                    df.groupby("sentiment_category")["price_change_1w"].mean().round(2)
+                # Average 2-week price change by sentiment category
+                avg_price_change_2w = (
+                    df.groupby("sentiment_category")["price_change_2w"].mean().round(2)
                 )
                 fig = px.bar(
-                    avg_price_change_1w,
-                    title="Average 1-Week Price Change by Sentiment Category",
+                    avg_price_change_2w,
+                    title="Average 2-Week Price Change by Sentiment Category",
                     labels={
                         "sentiment_category": "Sentiment",
                         "value": "Average Price Change (%)",
@@ -1094,17 +1094,17 @@ class StockSentimentDashboard:
                 st.plotly_chart(fig, use_container_width=True)
 
             with col2:
-                # Bullish/Bearish ratio impact (1-week)
+                # Bullish/Bearish ratio impact (2-week)
                 fig = px.scatter(
                     df,
                     x="bullish_comments_ratio",
-                    y="price_change_1w",
+                    y="price_change_2w",
                     color="comment_sentiment_avg",
                     hover_data=["ticker"],
-                    title="Bullish Ratio vs 1-Week Price Change",
+                    title="Bullish Ratio vs 2-Week Price Change",
                     labels={
                         "bullish_comments_ratio": "Bullish Comments Ratio",
-                        "price_change_1w": "1-Week Price Change (%)",
+                        "price_change_2w": "2-Week Price Change (%)",
                         "comment_sentiment_avg": "Overall Sentiment",
                     },
                 )
@@ -1115,80 +1115,80 @@ class StockSentimentDashboard:
 
         # Calculate prediction accuracy for both timeframes
         df["sentiment_correct_2d"] = (df["comment_sentiment_avg"] > 0) & (
-            df["price_change_1d"] > 0
-        ) | (df["comment_sentiment_avg"] < 0) & (df["price_change_1d"] < 0)
+            df["price_change_2d"] > 0
+        ) | (df["comment_sentiment_avg"] < 0) & (df["price_change_2d"] < 0)
 
         df["sentiment_correct_2w"] = (df["comment_sentiment_avg"] > 0) & (
-            df["price_change_1w"] > 0
-        ) | (df["comment_sentiment_avg"] < 0) & (df["price_change_1w"] < 0)
+            df["price_change_2w"] > 0
+        ) | (df["comment_sentiment_avg"] < 0) & (df["price_change_2w"] < 0)
 
         accuracy_2d = (df["sentiment_correct_2d"].sum() / len(df)) * 100
         accuracy_2w = (df["sentiment_correct_2w"].sum() / len(df)) * 100
 
         # Display metrics in tabs
-        accuracy_tab1, accuracy_tab2 = st.tabs(["1-Day Accuracy", "1-Week Accuracy"])
+        accuracy_tab1, accuracy_tab2 = st.tabs(["2-Day Accuracy", "2-Week Accuracy"])
 
         with accuracy_tab1:
             col1, col2, col3 = st.columns(3)
 
             with col1:
-                st.metric("1-Day Prediction Accuracy", f"{accuracy_2d:.1f}%")
+                st.metric("2-Day Prediction Accuracy", f"{accuracy_2d:.1f}%")
 
             with col2:
                 bullish_accuracy_2d = (
                     df[
-                        (df["comment_sentiment_avg"] > 0) & (df["price_change_1d"] > 0)
+                        (df["comment_sentiment_avg"] > 0) & (df["price_change_2d"] > 0)
                     ].shape[0]
                     / df[df["comment_sentiment_avg"] > 0].shape[0]
                     * 100
                 )
-                st.metric("1-Day Bullish Accuracy", f"{bullish_accuracy_2d:.1f}%")
+                st.metric("2-Day Bullish Accuracy", f"{bullish_accuracy_2d:.1f}%")
 
             with col3:
                 bearish_accuracy_2d = (
                     df[
-                        (df["comment_sentiment_avg"] < 0) & (df["price_change_1d"] < 0)
+                        (df["comment_sentiment_avg"] < 0) & (df["price_change_2d"] < 0)
                     ].shape[0]
                     / df[df["comment_sentiment_avg"] < 0].shape[0]
                     * 100
                 )
-                st.metric("1-Day Bearish Accuracy", f"{bearish_accuracy_2d:.1f}%")
+                st.metric("2-Day Bearish Accuracy", f"{bearish_accuracy_2d:.1f}%")
 
         with accuracy_tab2:
             col1, col2, col3 = st.columns(3)
 
             with col1:
-                st.metric("1-Week Prediction Accuracy", f"{accuracy_2w:.1f}%")
+                st.metric("2-Week Prediction Accuracy", f"{accuracy_2w:.1f}%")
 
             with col2:
                 bullish_accuracy_2w = (
                     df[
-                        (df["comment_sentiment_avg"] > 0) & (df["price_change_1w"] > 0)
+                        (df["comment_sentiment_avg"] > 0) & (df["price_change_2w"] > 0)
                     ].shape[0]
                     / df[df["comment_sentiment_avg"] > 0].shape[0]
                     * 100
                 )
-                st.metric("1-Week Bullish Accuracy", f"{bullish_accuracy_2w:.1f}%")
+                st.metric("2-Week Bullish Accuracy", f"{bullish_accuracy_2w:.1f}%")
 
             with col3:
                 bearish_accuracy_2w = (
                     df[
-                        (df["comment_sentiment_avg"] < 0) & (df["price_change_1w"] < 0)
+                        (df["comment_sentiment_avg"] < 0) & (df["price_change_2w"] < 0)
                     ].shape[0]
                     / df[df["comment_sentiment_avg"] < 0].shape[0]
                     * 100
                 )
-                st.metric("1-Week Bearish Accuracy", f"{bearish_accuracy_2w:.1f}%")
+                st.metric("2-Week Bearish Accuracy", f"{bearish_accuracy_2w:.1f}%")
 
         # Add time lag analysis
         st.subheader("Sentiment Lead/Lag Analysis")
 
         # Select timeframe for lag analysis
         lag_timeframe = st.radio(
-            "Select Timeframe", ["1-Day", "1-Week"], horizontal=True
+            "Select Timeframe", ["2-Day", "2-Week"], horizontal=True
         )
         price_change_col = (
-            "price_change_1d" if lag_timeframe == "1-Day" else "price_change_1w"
+            "price_change_2d" if lag_timeframe == "2-Day" else "price_change_2w"
         )
 
         # Calculate lagged correlations
@@ -1225,8 +1225,8 @@ class StockSentimentDashboard:
 
         # Volatility metrics
         volatility_metrics = {
-            "Daily Volatility": df["price_change_1d"].std(),
-            "Weekly Volatility": df["price_change_1w"].std(),
+            "Daily Volatility": df["price_change_2d"].std(),
+            "Weekly Volatility": df["price_change_2w"].std(),
             "Sentiment Volatility": df["comment_sentiment_avg"].std(),
         }
 
@@ -1240,7 +1240,7 @@ class StockSentimentDashboard:
         # Calculate rolling correlation
         window_size = 5  # 5-day rolling window
         df["rolling_correlation"] = (
-            df["comment_sentiment_avg"].rolling(window_size).corr(df["price_change_1w"])
+            df["comment_sentiment_avg"].rolling(window_size).corr(df["price_change_2w"])
         )
 
         fig = go.Figure()
@@ -1343,24 +1343,24 @@ class StockSentimentDashboard:
         correlations = {
             "Sentiment vs Price": {
                 "Same Day": safe_correlation(
-                    df["comment_sentiment_avg"], df["price_change_1w"]
+                    df["comment_sentiment_avg"], df["price_change_2w"]
                 ),
                 "Next Day": safe_correlation(
-                    df["comment_sentiment_avg"].shift(1), df["price_change_1w"]
+                    df["comment_sentiment_avg"].shift(1), df["price_change_2w"]
                 ),
                 "Previous Day": safe_correlation(
-                    df["comment_sentiment_avg"].shift(-1), df["price_change_1w"]
+                    df["comment_sentiment_avg"].shift(-1), df["price_change_2w"]
                 ),
             },
             "Bullish Ratio vs Price": {
                 "Same Day": safe_correlation(
-                    df["bullish_comments_ratio"], df["price_change_1w"]
+                    df["bullish_comments_ratio"], df["price_change_2w"]
                 ),
                 "Next Day": safe_correlation(
-                    df["bullish_comments_ratio"].shift(1), df["price_change_1w"]
+                    df["bullish_comments_ratio"].shift(1), df["price_change_2w"]
                 ),
                 "Previous Day": safe_correlation(
-                    df["bullish_comments_ratio"].shift(-1), df["price_change_1w"]
+                    df["bullish_comments_ratio"].shift(-1), df["price_change_2w"]
                 ),
             },
             "Volume vs Sentiment": {
@@ -1418,13 +1418,13 @@ class StockSentimentDashboard:
                 df["sentiment_price_corr"] = (
                     df["comment_sentiment_avg"]
                     .rolling(window=window_size, min_periods=3)
-                    .corr(df["price_change_1w"])
+                    .corr(df["price_change_2w"])
                 )
 
                 df["bullish_price_corr"] = (
                     df["bullish_comments_ratio"]
                     .rolling(window=window_size, min_periods=3)
-                    .corr(df["price_change_1w"])
+                    .corr(df["price_change_2w"])
                 )
 
                 # Plot rolling correlations
@@ -1484,10 +1484,10 @@ class StockSentimentDashboard:
 
             for lag in lags:
                 sent_corr = safe_correlation(
-                    df["comment_sentiment_avg"].shift(lag), df["price_change_1w"]
+                    df["comment_sentiment_avg"].shift(lag), df["price_change_2w"]
                 )
                 bull_corr = safe_correlation(
-                    df["bullish_comments_ratio"].shift(lag), df["price_change_1w"]
+                    df["bullish_comments_ratio"].shift(lag), df["price_change_2w"]
                 )
 
                 lag_correlations.append(
