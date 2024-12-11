@@ -303,39 +303,51 @@ class EnhancedStockAnalyzer:
         return list(set(tickers))  # Remove duplicates
 
     def get_stock_metrics(self, ticker: str) -> Optional[Dict]:
-        """Get comprehensive stock metrics using Polygon data"""
+        """Get comprehensive stock metrics with improved data validation"""
         try:
-            # Check cache first
-            # if ticker in self.stock_data_cache:
-                # return self.stock_data_cache[ticker]
-
-            # Get stock data from Polygon
-            stock_data = self.market_data.get_stock_data(ticker, days=180)  # 6 months of data
+            stock_data = self.market_data.get_stock_data(ticker, days=180)
             if not stock_data or stock_data['history'].empty:
+                logger.warning(f"No data available for {ticker}")
                 return None
-
+                
             hist = stock_data['history']
             info = stock_data['info']
-
+            
+            # Validate minimum data requirements
+            if len(hist) < 2:
+                logger.warning(f"Insufficient historical data for {ticker}")
+                return None
+                
             metrics = {}
-
-            # Calculate various metrics
+            
+            # Calculate metrics based on available data
             price_metrics = self._calculate_price_metrics(hist)
             volume_metrics = self._calculate_volume_metrics(hist)
-            technical_metrics = self._calculate_technical_indicators(hist)
-            volatility_metrics = self._calculate_volatility_metrics(hist)
-            momentum_metrics = self._calculate_momentum_indicators(hist)
+            
+            # Only calculate technical indicators if we have enough data
+            if len(hist) >= 20:
+                technical_metrics = self._calculate_technical_indicators(hist)
+                metrics.update(technical_metrics)
+                
+            # Only calculate volatility metrics if we have enough data
+            if len(hist) >= 14:
+                volatility_metrics = self._calculate_volatility_metrics(hist)
+                metrics.update(volatility_metrics)
+                
+            # Only calculate momentum indicators if we have enough data
+            if len(hist) >= 14:
+                momentum_metrics = self._calculate_momentum_indicators(hist)
+                metrics.update(momentum_metrics)
+                
+            # Get market context
             market_metrics = self._get_market_context(ticker)
-
-            # Combine all metrics
+            
+            # Update all available metrics
             metrics.update(price_metrics)
             metrics.update(volume_metrics)
-            metrics.update(technical_metrics)
-            metrics.update(volatility_metrics)
-            metrics.update(momentum_metrics)
             metrics.update(market_metrics)
-
-            # Add fundamental metrics from Polygon details
+            
+            # Add fundamental metrics if available
             fundamental_metrics = {
                 "market_cap": info.get("market_cap"),
                 "shares_outstanding": info.get("share_class_shares_outstanding"),
@@ -346,46 +358,12 @@ class EnhancedStockAnalyzer:
                 "type": info.get("type")
             }
             metrics.update(fundamental_metrics)
-
-            # Cache the results
-            # self.stock_data_cache[ticker] = metrics
+            
             return metrics
-
+            
         except Exception as e:
             logger.error(f"Error calculating metrics for {ticker}: {str(e)}")
             return None
-        
-    def _calculate_price_metrics(self, hist: pd.DataFrame) -> Dict:
-        """Calculate comprehensive price-based metrics"""
-        metrics = {}
-        try:
-            close = hist["Close"]
-
-            metrics.update(
-                {
-                    "current_price": round(close.iloc[-1], 2),
-                    "price_change_1d": round(
-                        ((close.iloc[-1] - close.iloc[-2]) / close.iloc[-2]) * 100, 2
-                    ),
-                    "price_change_1w": round(
-                        ((close.iloc[-1] - close.iloc[-5]) / close.iloc[-5]) * 100, 2
-                    ),
-                    "price_change_1m": round(
-                        ((close.iloc[-1] - close.iloc[-21]) / close.iloc[-21]) * 100, 2
-                    ),
-                    "price_change_3m": round(
-                        ((close.iloc[-1] - close.iloc[-63]) / close.iloc[-63]) * 100, 2
-                    ),
-                    "price_gaps": self._calculate_price_gaps(hist),
-                    "price_trend": self._identify_price_trend(close),
-                    "support_resistance": self._calculate_support_resistance(hist),
-                }
-            )
-
-        except Exception as e:
-            logger.error(f"Error in price metrics calculation: {str(e)}")
-
-        return metrics
 
     def _calculate_volume_metrics(self, hist: pd.DataFrame) -> Dict:
         """Calculate enhanced volume-based metrics"""
@@ -422,66 +400,60 @@ class EnhancedStockAnalyzer:
         return metrics
 
     def _calculate_volatility_metrics(self, hist: pd.DataFrame) -> Dict:
-        """Calculate comprehensive volatility metrics"""
+        """Calculate comprehensive volatility metrics with data validation"""
         metrics = {}
         try:
-            close = hist["Close"]
-
-            # Historical volatility calculations
+            if len(hist) < 2:  # Minimum required data points
+                return {}
+                
+            close = hist['Close']
+            
+            # Calculate returns with validation
             returns = close.pct_change().dropna()
-            metrics.update(
-                {
-                    "volatility_daily": round(returns.std() * np.sqrt(252) * 100, 2),
-                    "volatility_weekly": round(
+            
+            if len(returns) > 0:
+                # Daily volatility
+                metrics['volatility_daily'] = round(returns.std() * np.sqrt(252) * 100, 2)
+                
+                # Weekly volatility (requires at least 5 data points)
+                if len(returns) >= 5:
+                    metrics['volatility_weekly'] = round(
                         returns.rolling(5).std().iloc[-1] * np.sqrt(52) * 100, 2
-                    ),
-                    "volatility_monthly": round(
+                    )
+                    
+                # Monthly volatility (requires at least 21 data points)
+                if len(returns) >= 21:
+                    metrics['volatility_monthly'] = round(
                         returns.rolling(21).std().iloc[-1] * np.sqrt(12) * 100, 2
-                    ),
-                    "volatility_trend": self._calculate_volatility_trend(returns),
-                    "keltner_channels": self._calculate_keltner_channels(hist),
-                    "atr": round(
+                    )
+            
+            # Add volatility trend if enough data
+            if len(returns) >= 20:
+                metrics['volatility_trend'] = self._calculate_volatility_trend(returns)
+                
+            # Add Keltner channels if enough data
+            if len(hist) >= 20:
+                metrics['keltner_channels'] = self._calculate_keltner_channels(hist)
+                
+            # Add ATR if enough data
+            if len(hist) >= 14:
+                try:
+                    metrics['atr'] = round(
                         ta.volatility.average_true_range(
-                            hist["High"], hist["Low"], close
-                        ),
-                        4,
-                    ),
-                }
-            )
-
+                            hist['High'], hist['Low'], close
+                        ), 4
+                    )
+                except:
+                    metrics['atr'] = round(
+                        (hist['High'] - hist['Low']).rolling(window=14).mean().iloc[-1], 4
+                    )
+                    
+            return metrics
+            
         except Exception as e:
             logger.error(f"Error in volatility metrics calculation: {str(e)}")
-
-        return metrics
-
-    def _calculate_momentum_indicators(self, hist: pd.DataFrame) -> Dict:
-        """Calculate comprehensive momentum indicators"""
-        metrics = {}
-        try:
-            close = hist["Close"]
-            high = hist["High"]
-            low = hist["Low"]
-
-            metrics.update(
-                {
-                    "rsi": round(ta.momentum.rsi(close), 2),
-                    "stoch_rsi": round(ta.momentum.stochrsi(close), 2),
-                    "macd": self._calculate_macd(close),
-                    "adx": round(ta.trend.adx(high, low, close), 2),
-                    "cci": round(ta.trend.cci(high, low, close), 2),
-                    "williams_r": round(ta.momentum.williams_r(high, low, close), 2),
-                    "ultimate_oscillator": round(
-                        ta.momentum.ultimate_oscillator(high, low, close), 2
-                    ),
-                    "tsi": round(ta.momentum.tsi(close), 4),
-                }
-            )
-
-        except Exception as e:
-            logger.error(f"Error in momentum indicators calculation: {str(e)}")
-
-        return metrics
-
+            return {}
+        
     def _get_market_context(self, ticker: str) -> Dict:
         """Get market context metrics using Polygon data"""
         try:
@@ -624,27 +596,38 @@ class EnhancedStockAnalyzer:
         except Exception as e:
             logger.error(f"Error calculating beta: {str(e)}")
             return 1.0  # Return neutral beta on error
-        
+
     def _identify_price_trend(self, prices: pd.Series) -> str:
-        """Identify price trend using multiple timeframes"""
+        """Identify price trend using multiple timeframes with data validation"""
         try:
-            sma20 = prices.rolling(window=20).mean().iloc[-1]
-            sma50 = prices.rolling(window=50).mean().iloc[-1]
-            sma200 = prices.rolling(window=200).mean().iloc[-1]
+            if len(prices) < 20:
+                return "Insufficient Data"
+                
+            # Calculate SMAs based on available data
+            sma20 = prices.rolling(window=min(20, len(prices))).mean().iloc[-1]
+            sma50 = prices.rolling(window=min(50, len(prices))).mean().iloc[-1] if len(prices) >= 50 else None
+            sma200 = prices.rolling(window=min(200, len(prices))).mean().iloc[-1] if len(prices) >= 200 else None
             current_price = prices.iloc[-1]
-
-            # Determine trend strength and direction
-            if current_price > sma20 > sma50 > sma200:
-                return "Strong Uptrend"
-            elif current_price > sma20 > sma50:
-                return "Moderate Uptrend"
-            elif current_price < sma20 < sma50 < sma200:
-                return "Strong Downtrend"
-            elif current_price < sma20 < sma50:
-                return "Moderate Downtrend"
+            
+            # Determine trend based on available SMAs
+            if sma200 is not None and sma50 is not None:
+                if current_price > sma20 > sma50 > sma200:
+                    return "Strong Uptrend"
+                elif current_price < sma20 < sma50 < sma200:
+                    return "Strong Downtrend"
+            elif sma50 is not None:
+                if current_price > sma20 > sma50:
+                    return "Moderate Uptrend"
+                elif current_price < sma20 < sma50:
+                    return "Moderate Downtrend"
             else:
-                return "Sideways"
-
+                if current_price > sma20:
+                    return "Short-term Uptrend"
+                elif current_price < sma20:
+                    return "Short-term Downtrend"
+                
+            return "Sideways"
+            
         except Exception as e:
             logger.error(f"Error identifying price trend: {str(e)}")
             return "Unknown"
@@ -718,35 +701,49 @@ class EnhancedStockAnalyzer:
             logger.error(f"Error calculating volatility trend: {str(e)}")
             return "Unknown"
 
-    def _calculate_keltner_channels(self, hist: pd.DataFrame) -> Dict[str, float]:
-        """Calculate Keltner Channels"""
+    def _calculate_keltner_channels(self, hist: pd.DataFrame) -> Dict:
+        """Calculate Keltner Channels with data validation"""
         try:
-            close = hist["Close"]
-            high = hist["High"]
-            low = hist["Low"]
-
+            if len(hist) < 20:  # Minimum required data points
+                return {
+                    'keltner_middle': None,
+                    'keltner_upper': None,
+                    'keltner_lower': None
+                }
+                
+            close = hist['Close']
+            high = hist['High']
+            low = hist['Low']
+            
             # Calculate typical price
             typical_price = (high + low + close) / 3
-
+            
             # Calculate the middle line (20-day EMA)
-            middle_line = typical_price.ewm(span=20).mean()
-
-            # Calculate ATR
-            atr = ta.volatility.average_true_range(high, low, close)
-
+            middle_line = typical_price.ewm(span=20, adjust=False).mean()
+            
+            # Calculate ATR with validation
+            try:
+                atr = ta.volatility.average_true_range(high, low, close)
+            except:
+                atr = (high - low).rolling(window=14).mean()
+            
             # Calculate upper and lower bands
             upper_band = middle_line + (2 * atr)
             lower_band = middle_line - (2 * atr)
-
+            
             return {
-                "keltner_middle": round(middle_line.iloc[-1], 2),
-                "keltner_upper": round(upper_band.iloc[-1], 2),
-                "keltner_lower": round(lower_band.iloc[-1], 2),
+                'keltner_middle': round(middle_line.iloc[-1], 2),
+                'keltner_upper': round(upper_band.iloc[-1], 2),
+                'keltner_lower': round(lower_band.iloc[-1], 2)
             }
-
+            
         except Exception as e:
             logger.error(f"Error calculating Keltner Channels: {str(e)}")
-            return {}
+            return {
+                'keltner_middle': None,
+                'keltner_upper': None,
+                'keltner_lower': None
+            }
 
     def _calculate_weighted_iv(self, options_data: List[Dict]) -> float:
         """Calculate volume-weighted implied volatility"""
@@ -979,29 +976,6 @@ class EnhancedStockAnalyzer:
             return "Complacent"
         else:
             return "Extremely Complacent"
-
-    def analyze_complete_metrics(self, ticker: str) -> Dict:
-        """Perform complete analysis including technical, fundamental, and sentiment metrics"""
-        try:
-            metrics = {}
-
-            # Get base metrics
-            base_metrics = self.get_stock_metrics(ticker)
-            if base_metrics:
-                metrics.update(base_metrics)
-
-            # Get sentiment metrics
-            sentiment_metrics = self._analyze_sentiment_metrics(ticker)
-            metrics.update(sentiment_metrics)
-
-            # Calculate composite scores
-            metrics.update(self._calculate_composite_scores(metrics))
-
-            return metrics
-
-        except Exception as e:
-            logger.error(f"Error in complete metrics analysis: {str(e)}")
-            return {}
 
     def _calculate_composite_scores(self, metrics: Dict) -> Dict:
         """Calculate composite scores for different aspects of analysis"""
@@ -1362,44 +1336,59 @@ class EnhancedStockAnalyzer:
             return {"pivot": 0.0, "r1": 0.0, "r2": 0.0, "s1": 0.0, "s2": 0.0}
 
     def _calculate_price_metrics(self, hist: pd.DataFrame) -> Dict:
-        """Calculate comprehensive price-based metrics"""
+        """Calculate comprehensive price-based metrics with data validation"""
         metrics = {}
         try:
-            close = hist["Close"]
-
-            # Add swing points and pivot points
-            swing_points = self._identify_swing_points(hist)
-            pivot_points = self._calculate_pivot_points(hist)
-            price_gaps = self._calculate_price_gaps(hist)
-
-            metrics.update(
-                {
-                    "current_price": round(close.iloc[-1], 2),
-                    "price_change_1d": round(
-                        ((close.iloc[-1] - close.iloc[-2]) / close.iloc[-2]) * 100, 2
-                    ),
-                    "price_change_1w": round(
-                        ((close.iloc[-1] - close.iloc[-5]) / close.iloc[-5]) * 100, 2
-                    ),
-                    "price_change_1m": round(
-                        ((close.iloc[-1] - close.iloc[-21]) / close.iloc[-21]) * 100, 2
-                    ),
-                    "price_change_3m": round(
-                        ((close.iloc[-1] - close.iloc[-63]) / close.iloc[-63]) * 100, 2
-                    ),
-                    "price_gaps": price_gaps,
-                    "price_trend": self._identify_price_trend(close),
-                    "support_resistance": self._calculate_support_resistance(hist),
-                    **swing_points,  # Add swing points
-                    **pivot_points,  # Add pivot points
-                }
-            )
-
+            if len(hist) < 2:  # Minimum required data points
+                return {}
+                
+            close = hist['Close']
+            
+            # Base calculations with data validation
+            metrics['current_price'] = round(close.iloc[-1], 2)
+            
+            # 1-day change (requires at least 2 data points)
+            if len(close) >= 2:
+                metrics['price_change_1d'] = round(
+                    ((close.iloc[-1] - close.iloc[-2]) / close.iloc[-2]) * 100, 2
+                )
+            
+            # 1-week change (requires at least 5 data points)
+            if len(close) >= 5:
+                metrics['price_change_1w'] = round(
+                    ((close.iloc[-1] - close.iloc[-5]) / close.iloc[-5]) * 100, 2
+                )
+                
+            # 1-month change (requires at least 21 data points)
+            if len(close) >= 21:
+                metrics['price_change_1m'] = round(
+                    ((close.iloc[-1] - close.iloc[-21]) / close.iloc[-21]) * 100, 2
+                )
+                
+            # 3-month change (requires at least 63 data points)
+            if len(close) >= 63:
+                metrics['price_change_3m'] = round(
+                    ((close.iloc[-1] - close.iloc[-63]) / close.iloc[-63]) * 100, 2
+                )
+            
+            # Add price gaps if enough data
+            if len(hist) >= 2:
+                metrics['price_gaps'] = self._calculate_price_gaps(hist)
+                
+            # Add price trend if enough data
+            if len(close) >= 20:  # Minimum for meaningful trend
+                metrics['price_trend'] = self._identify_price_trend(close)
+                
+            # Add support/resistance if enough data
+            if len(hist) >= 20:
+                metrics['support_resistance'] = self._calculate_support_resistance(hist)
+                
+            return metrics
+            
         except Exception as e:
             logger.error(f"Error in price metrics calculation: {str(e)}")
-
-        return metrics
-
+            return {}
+           
     def _calculate_momentum_indicators(self, hist: pd.DataFrame) -> Dict:
         """Calculate comprehensive momentum indicators"""
         metrics = {}
@@ -2520,3 +2509,433 @@ class EnhancedStockAnalyzer:
             sentiment_data["correlations"] = {}
 
         return json.loads(json.dumps(sentiment_data, cls=CustomJSONEncoder))
+
+    # Modeling Functions
+    def _calculate_prediction_features(self, hist: pd.DataFrame) -> Dict:
+        """Calculate comprehensive features for prediction modeling"""
+        try:
+            features = {}
+            close = hist['Close']
+            volume = hist['Volume']
+            high = hist['High']
+            low = hist['Low']
+
+            # Price Movement Features
+            features.update({
+                # Trend Strength Indicators
+                'adx_14': round(ta.trend.adx(high, low, close, window=14), 2),
+                'cci_20': round(ta.trend.cci(high, low, close, window=20), 2),
+                'dpo_20': round(ta.trend.dpo(close, window=20), 2),
+                'trix_30': round(ta.trend.trix(close, window=30), 2),
+                
+                # Momentum Features
+                'rsi_14': round(ta.momentum.rsi(close, window=14), 2),
+                'stoch_k': round(ta.momentum.stoch(high, low, close), 2),
+                'stoch_d': round(ta.momentum.stoch_signal(high, low, close), 2),
+                'williams_r': round(ta.momentum.williams_r(high, low, close), 2),
+                'ultimate_osc': round(ta.momentum.ultimate_oscillator(high, low, close), 2),
+                
+                # Volatility Features
+                'bbands_upper': round(ta.volatility.bollinger_hband(close), 2),
+                'bbands_lower': round(ta.volatility.bollinger_lband(close), 2),
+                'atr_14': round(ta.volatility.average_true_range(high, low, close), 4),
+                'keltner_upper': self._calculate_keltner_channels(hist)['keltner_upper'],
+                'keltner_lower': self._calculate_keltner_channels(hist)['keltner_lower'],
+                
+                # Volume Features
+                'obv': round(ta.volume.on_balance_volume(close, volume), 2),
+                'mfi_14': round(ta.volume.money_flow_index(high, low, close, volume), 2),
+                'vwap': round(ta.volume.volume_weighted_average_price(high, low, close, volume), 2),
+                
+                # Price Pattern Features
+                'price_gaps': self._calculate_price_gaps(hist),
+                'swing_points': self._identify_swing_points(hist),
+                'support_resistance': self._calculate_support_resistance(hist),
+                
+                # Custom Ratios and Indicators
+                'close_to_high_ratio': round(close.iloc[-1] / high.rolling(20).max().iloc[-1], 4),
+                'close_to_low_ratio': round(close.iloc[-1] / low.rolling(20).min().iloc[-1], 4),
+                'volume_price_trend': round((volume * close).pct_change().mean(), 4),
+                
+                # Mean Reversion Features
+                'zscore_20': round((close - close.rolling(20).mean()) / close.rolling(20).std(), 2).iloc[-1],
+                'pct_from_sma50': round((close.iloc[-1] / close.rolling(50).mean().iloc[-1] - 1) * 100, 2),
+                'pct_from_sma200': round((close.iloc[-1] / close.rolling(200).mean().iloc[-1] - 1) * 100, 2)
+            })
+            
+            # Add Advanced Pattern Recognition
+            features.update(self._identify_candlestick_patterns(hist))
+            features.update(self._calculate_fibonacci_levels(hist))
+            
+            # Add Relative Strength Features
+            features.update(self._calculate_relative_strength_features(hist))
+            
+            # Add Sentiment-Price Correlation Features
+            features.update(self._calculate_sentiment_price_features(hist))
+            
+            return features
+            
+        except Exception as e:
+            logger.error(f"Error calculating prediction features: {str(e)}")
+            return {}
+
+    def _identify_candlestick_patterns(self, hist: pd.DataFrame) -> Dict:
+        """Identify candlestick patterns"""
+        try:
+            patterns = {}
+            open_prices = hist['Open']
+            high = hist['High']
+            low = hist['Low']
+            close = hist['Close']
+            
+            # Single Candlestick Patterns
+            patterns.update({
+                'doji': ta.candles.doji(open_prices, high, low, close),
+                'hammer': ta.candles.hammer(open_prices, high, low, close),
+                'shooting_star': ta.candles.shooting_star(open_prices, high, low, close),
+                'marubozu': ta.candles.marubozu(open_prices, high, low, close)
+            })
+            
+            # Multiple Candlestick Patterns
+            patterns.update({
+                'engulfing': ta.candles.engulfing(open_prices, high, low, close),
+                'morning_star': ta.candles.morning_star(open_prices, high, low, close),
+                'evening_star': ta.candles.evening_star(open_prices, high, low, close),
+                'three_white_soldiers': ta.candles.three_white_soldiers(open_prices, high, low, close)
+            })
+            
+            return {k: int(v.iloc[-1]) for k, v in patterns.items()}
+            
+        except Exception as e:
+            logger.error(f"Error identifying candlestick patterns: {str(e)}")
+            return {}
+
+    def _calculate_fibonacci_levels(self, hist: pd.DataFrame) -> Dict:
+        """Calculate Fibonacci retracement and extension levels"""
+        try:
+            high = hist['High'].iloc[-20:].max()
+            low = hist['Low'].iloc[-20:].min()
+            current = hist['Close'].iloc[-1]
+            
+            # Fibonacci ratios
+            ratios = [0.236, 0.382, 0.5, 0.618, 0.786]
+            
+            # Calculate retracement levels
+            range_size = high - low
+            retracement_levels = {
+                f'fib_ret_{int(ratio*1000)}': round(high - (ratio * range_size), 2)
+                for ratio in ratios
+            }
+            
+            # Calculate distance to each level
+            level_distances = {
+                f'dist_to_fib_{int(ratio*1000)}': round(
+                    abs(current - retracement_levels[f'fib_ret_{int(ratio*1000)}']) / current * 100, 2
+                )
+                for ratio in ratios
+            }
+            
+            return {**retracement_levels, **level_distances}
+            
+        except Exception as e:
+            logger.error(f"Error calculating Fibonacci levels: {str(e)}")
+            return {}
+
+    def _calculate_relative_strength_features(self, hist: pd.DataFrame) -> Dict:
+        """Calculate relative strength features compared to market and sector"""
+        try:
+            # Get SPY data for market comparison
+            spy_data = self.market_data.get_stock_data("SPY", days=180)
+            if not spy_data:
+                return {}
+                
+            stock_returns = hist['Close'].pct_change()
+            market_returns = spy_data['history']['Close'].pct_change()
+            
+            # Calculate relative strength features
+            features = {
+                'rs_1m': round(
+                    (stock_returns.tail(21).mean() / market_returns.tail(21).mean()), 4
+                ),
+                'rs_3m': round(
+                    (stock_returns.tail(63).mean() / market_returns.tail(63).mean()), 4
+                ),
+                'rs_momentum': round(
+                    (stock_returns.tail(5).mean() / market_returns.tail(5).mean()), 4
+                ),
+                'beta': self._calculate_beta(stock_returns, market_returns),
+                'correlation': round(stock_returns.corr(market_returns), 4)
+            }
+            
+            return features
+            
+        except Exception as e:
+            logger.error(f"Error calculating relative strength features: {str(e)}")
+            return {}
+
+    def _calculate_sentiment_price_features(self, hist: pd.DataFrame) -> Dict:
+        """Calculate features relating sentiment to price movements"""
+        try:
+            features = {}
+            
+            # Get recent sentiment data
+            sentiment_trends = self.db.get_sentiment_trends(
+                ticker=hist.index.name,
+                days=30,
+                include_technicals=True
+            )
+            
+            if not sentiment_trends.empty:
+                # Calculate sentiment momentum
+                sentiment_trends['sentiment_ma5'] = sentiment_trends['comment_sentiment_avg'].rolling(5).mean()
+                sentiment_trends['sentiment_ma20'] = sentiment_trends['comment_sentiment_avg'].rolling(20).mean()
+                
+                # Calculate sentiment-price correlation features
+                price_changes = hist['Close'].pct_change()
+                sentiment_changes = sentiment_trends['comment_sentiment_avg'].pct_change()
+                
+                features.update({
+                    'sentiment_price_corr': round(
+                        sentiment_changes.corr(price_changes), 4
+                    ),
+                    'sentiment_momentum': round(
+                        sentiment_trends['sentiment_ma5'].iloc[-1] 
+                        - sentiment_trends['sentiment_ma20'].iloc[-1], 4
+                    ),
+                    'sentiment_volatility': round(
+                        sentiment_changes.std() * np.sqrt(252), 4
+                    ),
+                    'bullish_ratio_ma5': round(
+                        sentiment_trends['bullish_comments_ratio'].rolling(5).mean().iloc[-1], 4
+                    ) if 'bullish_comments_ratio' in sentiment_trends.columns else 0
+                })
+                
+            return features
+            
+        except Exception as e:
+            logger.error(f"Error calculating sentiment-price features: {str(e)}")
+            return {}
+
+    def analyze_complete_metrics(self, ticker: str) -> Dict:
+        """Perform complete analysis including prediction features"""
+        try:
+            metrics = {}
+            
+            # Get base metrics
+            base_metrics = self.get_stock_metrics(ticker)
+            if base_metrics:
+                metrics.update(base_metrics)
+                
+            # Get sentiment metrics
+            sentiment_metrics = self._analyze_sentiment_metrics(ticker)
+            metrics.update(sentiment_metrics)
+            
+            # Calculate prediction features
+            if 'history' in base_metrics:
+                prediction_features = self._calculate_prediction_features(base_metrics['history'])
+                metrics.update(prediction_features)
+                
+            # Calculate composite scores
+            metrics.update(self._calculate_composite_scores(metrics))
+            
+            # Add prediction probabilities
+            metrics.update(self._calculate_prediction_probabilities(metrics))
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Error in complete metrics analysis: {str(e)}")
+            return {}
+
+    def _analyze_sentiment_metrics(self, ticker: str) -> Dict:
+        """
+        Calculate comprehensive sentiment metrics for a ticker
+        
+        Args:
+            ticker: Stock symbol
+            
+        Returns:
+            Dict containing sentiment metrics
+        """
+        try:
+            # Get recent sentiment data from database
+            sentiment_data = self.db.get_sentiment_trends(
+                ticker=ticker,
+                days=30,
+                include_technicals=True
+            )
+            
+            metrics = {}
+            
+            # If we have historical sentiment data
+            if not sentiment_data.empty:
+                # Calculate basic sentiment metrics
+                metrics.update({
+                    'sentiment_score': round(sentiment_data['comment_sentiment_avg'].mean(), 4),
+                    'sentiment_std': round(sentiment_data['comment_sentiment_avg'].std(), 4),
+                    'sentiment_min': round(sentiment_data['comment_sentiment_avg'].min(), 4),
+                    'sentiment_max': round(sentiment_data['comment_sentiment_avg'].max(), 4),
+                    
+                    # Sentiment trends
+                    'sentiment_momentum': round(
+                        sentiment_data['comment_sentiment_avg'].diff().mean(), 4
+                    ),
+                    'sentiment_acceleration': round(
+                        sentiment_data['comment_sentiment_avg'].diff().diff().mean(), 4
+                    ),
+                    
+                    # Bullish/Bearish metrics
+                    'avg_bullish_ratio': round(
+                        sentiment_data['bullish_comments_ratio'].mean()
+                        if 'bullish_comments_ratio' in sentiment_data.columns else 0.5,
+                        4
+                    ),
+                    'avg_bearish_ratio': round(
+                        sentiment_data['bearish_comments_ratio'].mean()
+                        if 'bearish_comments_ratio' in sentiment_data.columns else 0.5,
+                        4
+                    ),
+                    
+                    # Volatility in sentiment
+                    'sentiment_volatility': round(
+                        sentiment_data['comment_sentiment_avg'].pct_change().std() * np.sqrt(252),
+                        4
+                    ),
+                    
+                    # Sentiment consistency
+                    'sentiment_consistency': round(
+                        1 - (sentiment_data['comment_sentiment_avg'].std() / 
+                            (sentiment_data['comment_sentiment_avg'].max() - 
+                            sentiment_data['comment_sentiment_avg'].min() + 1e-6)),
+                        4
+                    )
+                })
+                
+                # Calculate rolling statistics if we have enough data
+                if len(sentiment_data) >= 5:
+                    sentiment_ma5 = sentiment_data['comment_sentiment_avg'].rolling(5).mean()
+                    sentiment_ma20 = sentiment_data['comment_sentiment_avg'].rolling(20).mean()
+                    
+                    metrics.update({
+                        'sentiment_ma5': round(sentiment_ma5.iloc[-1], 4),
+                        'sentiment_ma20': round(sentiment_ma20.iloc[-1], 4),
+                        'sentiment_trend': 'Bullish' if sentiment_ma5.iloc[-1] > sentiment_ma20.iloc[-1] else 'Bearish'
+                    })
+            
+            # Get real-time sentiment from recent posts
+            recent_posts = self.db.get_recent_posts_by_ticker(
+                ticker=ticker,
+                days=7,
+                include_comments=True
+            )
+            
+            if recent_posts:
+                recent_sentiments = []
+                recent_bull_ratio = []
+                recent_bear_ratio = []
+                
+                for post in recent_posts:
+                    if 'comments' in post:
+                        comment_sentiments = [
+                            comment.get('sentiment', {}).get('compound', 0)
+                            for comment in post['comments']
+                        ]
+                        if comment_sentiments:
+                            recent_sentiments.extend(comment_sentiments)
+                            
+                            # Calculate bull/bear ratio from comments
+                            bulls = sum(1 for s in comment_sentiments if s > 0.2)
+                            bears = sum(1 for s in comment_sentiments if s < -0.2)
+                            total = len(comment_sentiments)
+                            
+                            if total > 0:
+                                recent_bull_ratio.append(bulls / total)
+                                recent_bear_ratio.append(bears / total)
+                
+                if recent_sentiments:
+                    metrics.update({
+                        'recent_sentiment_avg': round(np.mean(recent_sentiments), 4),
+                        'recent_sentiment_std': round(np.std(recent_sentiments), 4),
+                        'recent_bull_ratio': round(np.mean(recent_bull_ratio), 4),
+                        'recent_bear_ratio': round(np.mean(recent_bear_ratio), 4),
+                        'sentiment_momentum_rt': round(
+                            np.mean(recent_sentiments) - metrics.get('sentiment_score', 0),
+                            4
+                        )
+                    })
+            
+            # Calculate sentiment signal strength (0-100)
+            if metrics:
+                sentiment_signals = [
+                    metrics.get('sentiment_score', 0) > 0,  # Positive sentiment
+                    metrics.get('sentiment_momentum', 0) > 0,  # Positive momentum
+                    metrics.get('avg_bullish_ratio', 0.5) > 0.6,  # Strong bullish ratio
+                    metrics.get('sentiment_consistency', 0) > 0.7,  # Consistent sentiment
+                    metrics.get('recent_sentiment_avg', 0) > 0  # Positive recent sentiment
+                ]
+                
+                metrics['sentiment_strength'] = round(
+                    (sum(1 for signal in sentiment_signals if signal) / len(sentiment_signals)) * 100,
+                    2
+                )
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Error analyzing sentiment metrics for {ticker}: {str(e)}")
+            return {}
+    
+    def _calculate_prediction_probabilities(self, metrics: Dict) -> Dict:
+        """Calculate probabilities for different price movement scenarios"""
+        try:
+            probs = {}
+            
+            # Technical signals
+            technical_bullish = sum([
+                1 if metrics.get('rsi_14', 50) < 30 else 0,  # Oversold
+                1 if metrics.get('williams_r', -50) < -80 else 0,  # Oversold
+                1 if metrics.get('close_to_low_ratio', 1) < 1.02 else 0,  # Near support
+                1 if metrics.get('macd_histogram', 0) > 0 else 0,  # MACD bullish
+                1 if metrics.get('volume_price_trend', 0) > 0 else 0  # Volume-price bullish
+            ]) / 5
+            
+            # Sentiment signals
+            sentiment_bullish = sum([
+                1 if metrics.get('comment_sentiment_avg', 0) > 0.2 else 0,
+                1 if metrics.get('bullish_comments_ratio', 0) > 0.6 else 0,
+                1 if metrics.get('sentiment_momentum', 0) > 0 else 0,
+                1 if metrics.get('sentiment_price_corr', 0) > 0.3 else 0
+            ]) / 4
+            
+            # Pattern signals
+            pattern_bullish = sum([
+                1 if metrics.get('hammer', 0) == 1 else 0,
+                1 if metrics.get('morning_star', 0) == 1 else 0,
+                1 if metrics.get('three_white_soldiers', 0) == 1 else 0,
+                1 if metrics.get('engulfing', 0) == 1 else 0
+            ]) / 4
+            
+            # Calculate weighted probabilities
+            probs['bullish_probability'] = round(
+                (technical_bullish * 0.5 + sentiment_bullish * 0.3 + pattern_bullish * 0.2) * 100, 2
+            )
+            
+            # Add trend strength
+            probs['trend_strength'] = round(
+                (metrics.get('adx_14', 20) / 100) * 100, 2
+            )
+            
+            # Add volatility prediction
+            vol_signals = sum([
+                1 if metrics.get('atr_14', 0) > metrics.get('atr_14_avg', 0) else 0,
+                1 if abs(metrics.get('zscore_20', 0)) > 2 else 0,
+                1 if metrics.get('sentiment_volatility', 0) > 0.2 else 0
+            ]) / 3
+            
+            probs['volatility_probability'] = round(vol_signals * 100, 2)
+            
+            return probs
+            
+        except Exception as e:
+            logger.error(f"Error calculating prediction probabilities: {str(e)}")
+            return {}
