@@ -1,4 +1,3 @@
-# src/connectors/polygon_connector.py
 
 from typing import Dict, List, Optional
 import pandas as pd
@@ -7,45 +6,81 @@ from datetime import datetime, timedelta
 from polygon import RESTClient
 from utils.logging_config import logger
 from utils.cache import CacheManager
+import time
+from functools import wraps
+import concurrent.futures
+
+def retry_with_backoff(retries=3, backoff_factor=0.3):
+    """Decorator for API calls with exponential backoff"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    logger.warning(f"Retry attempt {attempt + 1} of {retries} failed: {str(e)}")
+                    if attempt < retries - 1:
+                        sleep_time = backoff_factor * (2 ** attempt)
+                        time.sleep(sleep_time)
+            raise last_exception
+        return wrapper
+    return decorator
 
 class PolygonConnector:
-    """Connector for Polygon.io market data API"""
+    """Connector for Polygon.io market data API with improved connection handling"""
     
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, max_workers: int = 5, max_retries: int = 3):
         """
         Initialize Polygon connector
         
         Args:
             api_key: Polygon.io API key
+            max_workers: Maximum number of concurrent connections
+            max_retries: Maximum number of retry attempts for failed requests
         """
-        self.client = RESTClient(api_key)
-        # self.cache = CacheManager()
+        self.api_key = api_key
+        self.max_workers = max_workers
+        self.max_retries = max_retries
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+        self._initialize_client()
         
-    def get_stock_data(self, ticker: str, days: int = 180) -> Optional[Dict]:
-        """
-        Get stock data including price history and details
+    def _initialize_client(self):
+        """Initialize REST client"""
+        self.client = RESTClient(api_key=self.api_key)
         
-        Args:
-            ticker: Stock ticker symbol
-            days: Number of days of historical data
-            
-        Returns:
-            Dict containing stock data and metadata
-        """
+    def _get_client(self):
+        """Get a client instance with connection handling"""
         try:
-            # cache_key = f"stock_data_{ticker}_{days}"
-            # cached_data = self.cache.get(cache_key)
-            # if cached_data:
-                # return cached_data
-                
+            if not hasattr(self, 'client') or self.client is None:
+                self._initialize_client()
+            return self.client
+        except Exception as e:
+            logger.error(f"Error initializing Polygon client: {str(e)}")
+            raise
+
+    @retry_with_backoff()
+    def get_stock_data(self, ticker: str, days: int = 180) -> Optional[Dict]:
+        """Get stock data including price history and details with improved connection handling"""
+        try:
+            client = self._get_client()
+            
+            # Introduce small delay between consecutive API calls
+            time.sleep(0.1)
+            
             # Get stock details
-            details = self.client.get_ticker_details(ticker)
+            details = client.get_ticker_details(ticker)
+            
+            # Small delay between API calls
+            time.sleep(0.1)
             
             # Get price history
             end_date = datetime.now()
             start_date = end_date - timedelta(days=days)
             
-            aggs = self.client.get_aggs(
+            aggs = client.get_aggs(
                 ticker=ticker,
                 multiplier=1,
                 timespan="day",
@@ -86,17 +121,26 @@ class PolygonConnector:
                 }
             }
             
-            # self.cache.set(cache_key, result, ttl=3600)  # Cache for 1 hour
             return result
             
         except Exception as e:
             logger.error(f"Error fetching stock data for {ticker}: {str(e)}")
             return None
-            
-    def get_market_status(self) -> Dict:
-        """Get current market status"""
+
+    def __del__(self):
+        """Cleanup resources on deletion"""
         try:
-            status = self.client.get_market_status()
+            self.executor.shutdown(wait=True)
+        except Exception as e:
+            logger.error(f"Error cleaning up PolygonConnector: {str(e)}")
+
+    @retry_with_backoff()
+    def get_market_status(self) -> Dict:
+        """Get current market status with retry logic"""
+        try:
+            client = self._get_client()
+            time.sleep(0.1)  # Small delay to avoid rate limiting
+            status = client.get_market_status()
             return {
                 'market_status': status.market,
                 'server_time': status.server_time,
@@ -105,83 +149,19 @@ class PolygonConnector:
         except Exception as e:
             logger.error(f"Error getting market status: {str(e)}")
             return {}
-            
-    def get_ticker_news(self, ticker: str, limit: int = 10) -> List[Dict]:
-        """Get recent news for a ticker"""
-        try:
-            news = self.client.get_ticker_news(ticker, limit=limit)
-            return [{
-                'title': n.title,
-                'author': n.author,
-                'published_utc': n.published_utc,
-                'article_url': n.article_url,
-                'tickers': n.tickers,
-                'description': n.description
-            } for n in news]
-        except Exception as e:
-            logger.error(f"Error getting news for {ticker}: {str(e)}")
-            return []
-            
-    def get_daily_open_close(self, ticker: str, date: str) -> Optional[Dict]:
-        """Get daily open/close data for a specific date"""
-        try:
-            data = self.client.get_daily_open_close(ticker, date)
-            return {
-                'open': data.open,
-                'close': data.close,
-                'high': data.high,
-                'low': data.low,
-                'volume': data.volume,
-                'after_hours': data.after_hours,
-                'pre_market': data.pre_market
-            }
-        except Exception as e:
-            logger.error(f"Error getting daily data for {ticker}: {str(e)}")
-            return None
-            
-    def get_ticker_types(self, ticker: str) -> Dict:
-        """Get supported ticker types and exchanges"""
-        try:
-            types = self.client.get_ticker_types()
-            return {
-                'types': types.types,
-                'exchanges': types.exchanges
-            }
-        except Exception as e:
-            logger.error(f"Error getting ticker types: {str(e)}")
-            return {}
-            
-    def get_ticker_details(self, ticker: str) -> Optional[Dict]:
-        """Get detailed information about a ticker"""
-        try:
-            details = self.client.get_ticker_details(ticker)
-            return {
-                'name': details.name,
-                'market_cap': details.market_cap,
-                'shares_outstanding': details.share_class_shares_outstanding,
-                'exchange': details.primary_exchange,
-                'type': details.type,
-                'currency': details.currency_name,
-                'description': details.description,
-                'sector': details.sic_description,
-                'industry': details.standard_industry_classification,
-                'market': details.market,
-                'locale': details.locale,
-                'primary_exchange': details.primary_exchange,
-                'active': details.active
-            }
-        except Exception as e:
-            logger.error(f"Error getting ticker details for {ticker}: {str(e)}")
-            return None
-            
+
+    @retry_with_backoff()
     def is_valid_ticker(self, ticker: str) -> bool:
         """Check if a ticker is valid"""
         try:
-            details = self.client.get_ticker_details(ticker)
+            client = self._get_client()
+            time.sleep(0.1)  # Small delay to avoid rate limiting
+            details = client.get_ticker_details(ticker)
             return details is not None and details.active
         except Exception:
             return False
-            
+    
+    @retry_with_backoff()
     def get_previous_close(self, ticker: str) -> Optional[float]:
         """Get previous day's closing price"""
         try:
@@ -193,6 +173,7 @@ class PolygonConnector:
             logger.error(f"Error getting previous close for {ticker}: {str(e)}")
             return None
             
+    @retry_with_backoff()
     def get_stock_splits(self, ticker: str) -> List[Dict]:
         """Get historical stock splits"""
         try:
@@ -205,7 +186,8 @@ class PolygonConnector:
         except Exception as e:
             logger.error(f"Error getting splits for {ticker}: {str(e)}")
             return []
-
+    
+    @retry_with_backoff()
     def get_aggregates(
         self,
         ticker: str,
@@ -256,7 +238,8 @@ class PolygonConnector:
         except Exception as e:
             logger.error(f"Error getting aggregates for {ticker}: {str(e)}")
             return None
-        
+    
+    @retry_with_backoff()
     def get_pe_ratio(self, ticker: str) -> Optional[float]:
         """
         Calculate P/E ratio using Polygon data
@@ -324,6 +307,7 @@ class PolygonConnector:
             logger.error(f"Error calculating P/E ratio for {ticker}: {str(e)}")
             return None
 
+    @retry_with_backoff()
     def get_financial_ratios(self, ticker: str) -> Dict[str, Optional[float]]:
         """
         Get comprehensive financial ratios for a stock
@@ -392,6 +376,7 @@ class PolygonConnector:
             logger.error(f"Error calculating financial ratios for {ticker}: {str(e)}")
             return {}
 
+    @retry_with_backoff()
     def get_market_cap(self, ticker: str) -> Optional[float]:
         """
         Get current market cap for a stock

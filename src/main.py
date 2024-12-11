@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-
 def main():
     analyzer = EnhancedStockAnalyzer(
         os.getenv("CLIENT_ID", ""),
@@ -30,7 +29,7 @@ def main():
 
     subreddits_to_analyze = [
         "wallstreetbets",
-        "stocks",
+        # "stocks",
         # "investing",
         # "stockmarket",
         # "robinhood",
@@ -73,7 +72,6 @@ def main():
 
         # Add market context with proper scalar conversion
         try:
-
             def calculate_correlation(ticker):
                 if pd.isna(ticker):
                     return 0.0
@@ -104,99 +102,114 @@ def main():
                     )
 
                 except Exception as e:
-                    print(f"Error calculating correlation for {ticker}: {str(e)}")
+                    logger.warning(f"Error calculating correlation for {ticker}: {str(e)}")
                     return 0.0
 
             df["market_correlation"] = df["ticker"].apply(calculate_correlation)
 
         except Exception as e:
-            print(f"Warning: Could not calculate market correlations: {str(e)}")
+            logger.warning(f"Warning: Could not calculate market correlations: {str(e)}")
             df["market_correlation"] = 0.0
+
+    # First, verify which columns exist in the DataFrames
+    sample_df = final_results[0] if final_results else pd.DataFrame()
+    available_columns = sample_df.columns.tolist()
+
+    # Define aggregation dictionary with only available columns
+    agg_dict = {
+        # Base columns that should always exist
+        "score": "mean",
+        "num_comments": "sum",
+        "market_correlation": "first",
+        "analysis_timestamp": "first",
+        "data_start_date": "first",
+        "data_end_date": "first"
+    }
+
+    # Optional columns - only add if they exist
+    optional_columns = {
+        # Sentiment Metrics
+        "comment_sentiment_avg": "mean",
+        "base_sentiment": "mean",
+        "submission_sentiment": "mean",
+        "bullish_comments_ratio": "mean",
+        "bearish_comments_ratio": "mean",
+        # Price and Volume Metrics
+        "current_price": "first",
+        "price_change_1d": "first",
+        "price_change_1w": "first",
+        "volume_sma": "first",
+        "volume_ratio": "first",
+        # Technical Indicators
+        "sma_20": "first",
+        "rsi": "first",
+        "volatility": "first",
+        # Fundamental Metrics
+        "market_cap": "first"
+    }
+
+    # Add optional columns only if they exist in the DataFrame
+    for col, agg_func in optional_columns.items():
+        if col in available_columns:
+            agg_dict[col] = agg_func
 
     # Combine and aggregate results with available metrics
     combined_results = (
         pd.concat(final_results)
         .groupby("ticker")
-        .agg(
-            {
-                # Reddit and Social Metrics
-                "score": "mean",
-                "num_comments": "sum",
-                # Sentiment Metrics
-                "comment_sentiment_avg": "mean",
-                "base_sentiment": "mean",
-                "submission_sentiment": "mean",
-                "bullish_comments_ratio": "mean",
-                "bearish_comments_ratio": "mean",
-                # Price and Volume Metrics (updated to match EnhancedStockAnalyzer output)
-                "current_price": "first",
-                "price_change_1d": "first",
-                "price_change_1w": "first",
-                "volume_sma": "first",
-                "volume_ratio": "first",
-                # Technical Indicators
-                "sma_20": "first",
-                "rsi": "first",
-                "volatility": "first",
-                # Fundamental Metrics
-                "market_cap": "first",
-                "pe_ratio": "first",
-                # Market Context
-                "market_correlation": "first",
-                # Timestamps
-                "analysis_timestamp": "first",
-                "data_start_date": "first",
-                "data_end_date": "first",
-            }
-        )
-        .reset_index()
-    )
+        .agg(agg_dict)
+    )  # Remove reset_index() here as ticker is already the index
 
-    # Update composite score calculation with new column names
-    combined_results["composite_score"] = (
-        # Social and Sentiment Components (40%)
-        combined_results["num_comments"].rank(pct=True) * 0.15
-        + combined_results["comment_sentiment_avg"].rank(pct=True) * 0.15
-        + combined_results["bullish_comments_ratio"].rank(pct=True) * 0.10
-        +
-        # Technical Components (40%)
-        combined_results["volume_ratio"].rank(pct=True)
-        * 0.15  # Updated from volume_change
-        + combined_results["price_change_1d"].rank(pct=True)
-        * 0.10  # Updated from price_change_2d
-        + combined_results["price_change_1w"].rank(pct=True)
-        * 0.15  # Updated from price_change_2w
-        + combined_results["rsi"]
-        .apply(lambda x: 1 - abs(50 - x) / 50 if pd.notnull(x) else 0)
-        .rank(pct=True)
-        * 0.10
-        +
-        # Market Context (10%)
-        combined_results["market_correlation"].rank(pct=True) * 0.10
-    )
+    # Reset index only if ticker is not already a column
+    if "ticker" not in combined_results.columns:
+        combined_results = combined_results.reset_index()
+
+    # Update composite score calculation with only available columns
+    score_components = []
+    
+    # Social and Sentiment Components (40%)
+    if "num_comments" in combined_results.columns:
+        score_components.append(combined_results["num_comments"].rank(pct=True) * 0.15)
+    if "comment_sentiment_avg" in combined_results.columns:
+        score_components.append(combined_results["comment_sentiment_avg"].rank(pct=True) * 0.15)
+    if "bullish_comments_ratio" in combined_results.columns:
+        score_components.append(combined_results["bullish_comments_ratio"].rank(pct=True) * 0.10)
+    
+    # Technical Components (40%)
+    if "volume_ratio" in combined_results.columns:
+        score_components.append(combined_results["volume_ratio"].rank(pct=True) * 0.15)
+    if "price_change_1d" in combined_results.columns:
+        score_components.append(combined_results["price_change_1d"].rank(pct=True) * 0.10)
+    if "price_change_1w" in combined_results.columns:
+        score_components.append(combined_results["price_change_1w"].rank(pct=True) * 0.15)
+    if "rsi" in combined_results.columns:
+        score_components.append(
+            combined_results["rsi"]
+            .apply(lambda x: 1 - abs(50 - x) / 50 if pd.notnull(x) else 0)
+            .rank(pct=True) * 0.10
+        )
+    
+    # Market Context (10%)
+    if "market_correlation" in combined_results.columns:
+        score_components.append(combined_results["market_correlation"].rank(pct=True) * 0.10)
+
+    # Calculate composite score only with available components
+    combined_results["composite_score"] = sum(score_components)
 
     top_stocks = combined_results.nlargest(50, "composite_score")
 
-    # Update fill values dictionary with new column names
-    fill_values = {
-        # Social metrics
-        "score": 0,
-        "num_comments": 0,
-        # Sentiment metrics
-        "comment_sentiment_avg": 0,
-        "base_sentiment": 0,
-        "submission_sentiment": 0,
-        "bullish_comments_ratio": 0,
-        "bearish_comments_ratio": 0,
-        # Technical metrics
-        "volume_ratio": 0,  # Updated from volume_change
-        "rsi": 50,
-        # Composite scores
-        "composite_score": 0,
-        "risk_adjusted_score": 0,
-        # Market context
-        "market_correlation": 0,
-    }
+    # Update fill values dictionary only with available columns
+    fill_values = {}
+    for col in combined_results.columns:
+        if col in ["score", "num_comments"]:
+            fill_values[col] = 0
+        elif col in ["comment_sentiment_avg", "base_sentiment", "submission_sentiment", 
+                    "bullish_comments_ratio", "bearish_comments_ratio"]:
+            fill_values[col] = 0
+        elif col == "rsi":
+            fill_values[col] = 50
+        elif col in ["volume_ratio", "composite_score", "market_correlation"]:
+            fill_values[col] = 0
 
     top_stocks = top_stocks.replace([np.inf, -np.inf], np.nan)
     top_stocks = top_stocks.fillna(fill_values)
@@ -214,10 +227,7 @@ def main():
     # Log summary
     logger.info(f"Processed {len(combined_results)} unique tickers")
     logger.info(f"Top ticker by sentiment: {top_stocks.iloc[0]['ticker']}")
-    logger.info(
-        f"Top ticker composite score: {top_stocks.iloc[0]['composite_score']:.2f}"
-    )
-
+    logger.info(f"Top ticker composite score: {top_stocks.iloc[0]['composite_score']:.2f}")
 
 if __name__ == "__main__":
     main()
