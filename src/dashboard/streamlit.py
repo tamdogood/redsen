@@ -949,17 +949,6 @@ class StockSentimentDashboard:
             st.subheader("Overbought Stocks (RSI > 70)")
             if overbought_tickers:
                 # Create a nice container for the stocks
-                st.markdown("""
-                    <style>
-                    .rsi-box {
-                        padding: 10px;
-                        border-radius: 5px;
-                        margin: 5px 0;
-                        background-color: #ffebee;
-                    }
-                    </style>
-                """, unsafe_allow_html=True)
-                
                 for ticker, rsi in overbought_tickers.items():
                     with st.container():
                         st.markdown(f"""
@@ -981,17 +970,6 @@ class StockSentimentDashboard:
             st.subheader("Oversold Stocks (RSI < 30)")
             if oversold_tickers:
                 # Create a nice container for the stocks
-                st.markdown("""
-                    <style>
-                    .rsi-box-oversold {
-                        padding: 10px;
-                        border-radius: 5px;
-                        margin: 5px 0;
-                        background-color: #e8f5e9;
-                    }
-                    </style>
-                """, unsafe_allow_html=True)
-                
                 for ticker, rsi in oversold_tickers.items():
                     with st.container():
                         st.markdown(f"""
