@@ -8,7 +8,7 @@ from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import yfinance as yf
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from connectors.supabase_connector import CustomJSONEncoder, SupabaseConnector
 from utils.logging_config import logger
@@ -1033,31 +1033,103 @@ class EnhancedStockAnalyzer:
         return trend_scores.get(trend, 0.5)
 
     def _score_momentum(self, metrics: Dict) -> float:
-        """Score momentum indicators (0-1)"""
+        """
+        Score momentum indicators with proper type handling
+        
+        Args:
+            metrics: Dictionary of metrics
+            
+        Returns:
+            float: Momentum score between 0 and 1
+        """
         try:
             scores = []
-
+            
             # RSI score (30-70 range is neutral)
-            rsi = metrics.get("rsi", 50)
-            if rsi > 70:
-                scores.append(1.0)
-            elif rsi < 30:
-                scores.append(0.0)
-            else:
-                scores.append(0.5 + (rsi - 50) / 40)
-
+            try:
+                rsi = metrics.get("rsi", 50)
+                if isinstance(rsi, pd.Series):
+                    rsi = rsi.iloc[-1]  # Get last value if it's a series
+                rsi = float(rsi)
+                
+                if rsi > 70:
+                    scores.append(1.0)
+                elif rsi < 30:
+                    scores.append(0.0)
+                else:
+                    scores.append(0.5 + (rsi - 50) / 40)
+            except (TypeError, ValueError) as e:
+                logger.debug(f"Error processing RSI: {str(e)}")
+                scores.append(0.5)  # Neutral score on error
+                
             # MACD score
-            macd = metrics.get("macd", {})
-            if macd.get("macd_line", 0) > macd.get("signal_line", 0):
-                scores.append(0.75)
-            else:
-                scores.append(0.25)
-
-            return sum(scores) / len(scores) if scores else 0.5
-
+            try:
+                macd = metrics.get("macd", {})
+                if isinstance(macd, dict):
+                    macd_line = float(macd.get("macd_line", 0))
+                    signal_line = float(macd.get("signal_line", 0))
+                else:
+                    macd_line = 0
+                    signal_line = 0
+                    
+                if macd_line > signal_line:
+                    scores.append(0.75)
+                else:
+                    scores.append(0.25)
+            except (TypeError, ValueError) as e:
+                logger.debug(f"Error processing MACD: {str(e)}")
+                scores.append(0.5)
+                
+            # Momentum indicator
+            try:
+                momentum = metrics.get("momentum_score", 0)
+                if isinstance(momentum, pd.Series):
+                    momentum = momentum.iloc[-1]
+                momentum = float(momentum)
+                scores.append(0.5 + (momentum / 2))  # Normalize to 0-1 range
+            except (TypeError, ValueError) as e:
+                logger.debug(f"Error processing momentum score: {str(e)}")
+                
+            # Sentiment momentum if available
+            try:
+                sent_momentum = metrics.get("sentiment_momentum", 0)
+                if isinstance(sent_momentum, pd.Series):
+                    sent_momentum = sent_momentum.iloc[-1]
+                sent_momentum = float(sent_momentum)
+                
+                if abs(sent_momentum) > 0:
+                    scores.append(0.5 + (sent_momentum / 2))
+            except (TypeError, ValueError) as e:
+                logger.debug(f"Error processing sentiment momentum: {str(e)}")
+                
+            # Calculate final score
+            if scores:
+                return float(sum(scores) / len(scores))
+            return 0.5  # Neutral score if no valid components
+            
         except Exception as e:
             logger.error(f"Error scoring momentum: {str(e)}")
-            return 0.5
+            return 0.5  # Return neutral score on error
+
+    def _safe_float_conversion(self, value: Any, default: float = 0.0) -> float:
+        """
+        Safely convert a value to float
+        
+        Args:
+            value: Value to convert
+            default: Default value if conversion fails
+            
+        Returns:
+            float: Converted value or default
+        """
+        try:
+            if isinstance(value, pd.Series):
+                if len(value) > 0:
+                    return float(value.iloc[-1])
+                return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
 
     def _score_volatility(self, metrics: Dict) -> float:
         """Score volatility metrics (0-1)"""
@@ -1094,7 +1166,7 @@ class EnhancedStockAnalyzer:
     def _score_valuation(self, metrics: Dict) -> float:
         """Score valuation metrics (0-1)"""
         try:
-            pe_ratio = metrics.get("pe_ratio", 20)
+            pe_ratio = metrics.get("pe_ratio", 0.0)
 
             if pe_ratio <= 0:
                 return 0.0
@@ -1189,7 +1261,7 @@ class EnhancedStockAnalyzer:
         rs = gain / loss
         return 100 - (100 / (1 + rs.iloc[-1]))
 
-    def _get_fundamental_metrics(self, ticker: str) -> Dict:
+    def get_fundamental_metrics(self, ticker: str) -> Dict:
         """Get fundamental metrics for a stock"""
         try:
             # Get financial ratios from Polygon
@@ -2201,6 +2273,7 @@ class EnhancedStockAnalyzer:
             }
 
             for _, row in df.iterrows():
+                print(row)
                 stock_data = {
                     "ticker": str(row["ticker"]),
                     "sentiment_metrics": {
@@ -2747,87 +2820,112 @@ class EnhancedStockAnalyzer:
             logger.error(f"Error in complete metrics analysis: {str(e)}")
             return {}
 
+    def get_recent_posts_by_ticker(self, ticker: str, days: int = 7, include_comments: bool = False) -> List[Dict]:
+        """
+        Get recent posts for a specific ticker
+        
+        Args:
+            ticker: Stock symbol
+            days: Number of days to look back
+            include_comments: Whether to include post comments
+            
+        Returns:
+            List of post dictionaries
+        """
+        try:
+            cutoff_date = (dt.datetime.now() - dt.timedelta(days=days)).isoformat()
+            
+            # First get the posts that mention this ticker
+            posts_query = (
+                self.db.supabase.table("post_tickers")
+                .select("*, reddit_posts(*)")
+                .eq("ticker", ticker)
+                .gte("mentioned_at", cutoff_date)
+                .order("mentioned_at", desc=True)
+                .limit(100)
+                .execute()
+            )
+            
+            if not posts_query.data:
+                return []
+                
+            posts = []
+            for post_ticker in posts_query.data:
+                if not post_ticker.get('reddit_posts'):
+                    continue
+                    
+                post_data = {
+                    **post_ticker['reddit_posts'],
+                    "ticker_mention": {
+                        "ticker": post_ticker['ticker'],
+                        "mentioned_at": post_ticker['mentioned_at']
+                    }
+                }
+                
+                # If comments are requested, get them separately
+                if include_comments:
+                    try:
+                        comments_query = (
+                            self.db.supabase.table("post_comments")
+                            .select("*")
+                            .eq("post_id", post_ticker['reddit_posts']['post_id'])
+                            .execute()
+                        )
+                        post_data["comments"] = comments_query.data
+                    except Exception as e:
+                        logger.error(f"Error fetching comments for post {post_ticker['reddit_posts']['post_id']}: {str(e)}")
+                        post_data["comments"] = []
+                
+                posts.append(post_data)
+                
+            return posts
+            
+        except Exception as e:
+            logger.error(f"Error retrieving posts for {ticker}: {str(e)}")
+            return []
+    
     def _analyze_sentiment_metrics(self, ticker: str) -> Dict:
         """
-        Calculate comprehensive sentiment metrics for a ticker
+        Calculate sentiment metrics for a ticker
         
         Args:
             ticker: Stock symbol
             
         Returns:
-            Dict containing sentiment metrics
+            Dictionary of sentiment metrics
         """
         try:
-            # Get recent sentiment data from database
+            metrics = {}
+            
+            # Get sentiment trends
             sentiment_data = self.db.get_sentiment_trends(
                 ticker=ticker,
                 days=30,
                 include_technicals=True
             )
             
-            metrics = {}
-            
-            # If we have historical sentiment data
             if not sentiment_data.empty:
                 # Calculate basic sentiment metrics
+                sentiment_avg = pd.to_numeric(sentiment_data['comment_sentiment_avg'], errors='coerce')
+                
                 metrics.update({
-                    'sentiment_score': round(sentiment_data['comment_sentiment_avg'].mean(), 4),
-                    'sentiment_std': round(sentiment_data['comment_sentiment_avg'].std(), 4),
-                    'sentiment_min': round(sentiment_data['comment_sentiment_avg'].min(), 4),
-                    'sentiment_max': round(sentiment_data['comment_sentiment_avg'].max(), 4),
-                    
-                    # Sentiment trends
-                    'sentiment_momentum': round(
-                        sentiment_data['comment_sentiment_avg'].diff().mean(), 4
-                    ),
-                    'sentiment_acceleration': round(
-                        sentiment_data['comment_sentiment_avg'].diff().diff().mean(), 4
-                    ),
-                    
-                    # Bullish/Bearish metrics
-                    'avg_bullish_ratio': round(
-                        sentiment_data['bullish_comments_ratio'].mean()
-                        if 'bullish_comments_ratio' in sentiment_data.columns else 0.5,
-                        4
-                    ),
-                    'avg_bearish_ratio': round(
-                        sentiment_data['bearish_comments_ratio'].mean()
-                        if 'bearish_comments_ratio' in sentiment_data.columns else 0.5,
-                        4
-                    ),
-                    
-                    # Volatility in sentiment
-                    'sentiment_volatility': round(
-                        sentiment_data['comment_sentiment_avg'].pct_change().std() * np.sqrt(252),
-                        4
-                    ),
-                    
-                    # Sentiment consistency
-                    'sentiment_consistency': round(
-                        1 - (sentiment_data['comment_sentiment_avg'].std() / 
-                            (sentiment_data['comment_sentiment_avg'].max() - 
-                            sentiment_data['comment_sentiment_avg'].min() + 1e-6)),
-                        4
-                    )
+                    'sentiment_score': float(sentiment_avg.mean()) if not sentiment_avg.isna().all() else 0,
+                    'sentiment_std': float(sentiment_avg.std()) if not sentiment_avg.isna().all() else 0,
+                    'sentiment_momentum': float(sentiment_avg.diff().mean()) if len(sentiment_avg) > 1 else 0,
+                    'sentiment_volatility': float(sentiment_avg.pct_change().std() * np.sqrt(252)) if len(sentiment_avg) > 1 else 0
                 })
                 
-                # Calculate rolling statistics if we have enough data
-                if len(sentiment_data) >= 5:
-                    sentiment_ma5 = sentiment_data['comment_sentiment_avg'].rolling(5).mean()
-                    sentiment_ma20 = sentiment_data['comment_sentiment_avg'].rolling(20).mean()
+                # Calculate bullish/bearish ratios if available
+                if 'bullish_comments_ratio' in sentiment_data.columns:
+                    bullish_ratio = pd.to_numeric(sentiment_data['bullish_comments_ratio'], errors='coerce')
+                    metrics['avg_bullish_ratio'] = float(bullish_ratio.mean()) if not bullish_ratio.isna().all() else 0.5
                     
-                    metrics.update({
-                        'sentiment_ma5': round(sentiment_ma5.iloc[-1], 4),
-                        'sentiment_ma20': round(sentiment_ma20.iloc[-1], 4),
-                        'sentiment_trend': 'Bullish' if sentiment_ma5.iloc[-1] > sentiment_ma20.iloc[-1] else 'Bearish'
-                    })
+                if 'bearish_comments_ratio' in sentiment_data.columns:
+                    bearish_ratio = pd.to_numeric(sentiment_data['bearish_comments_ratio'], errors='coerce')
+                    metrics['avg_bearish_ratio'] = float(bearish_ratio.mean()) if not bearish_ratio.isna().all() else 0.5
             
-            # Get real-time sentiment from recent posts
-            recent_posts = self.db.get_recent_posts_by_ticker(
-                ticker=ticker,
-                days=7,
-                include_comments=True
-            )
+            # Get recent posts
+            recent_posts = self.get_recent_posts_by_ticker(ticker, days=7, include_comments=True)
             
             if recent_posts:
                 recent_sentiments = []
@@ -2835,56 +2933,56 @@ class EnhancedStockAnalyzer:
                 recent_bear_ratio = []
                 
                 for post in recent_posts:
-                    if 'comments' in post:
-                        comment_sentiments = [
-                            comment.get('sentiment', {}).get('compound', 0)
-                            for comment in post['comments']
-                        ]
-                        if comment_sentiments:
-                            recent_sentiments.extend(comment_sentiments)
-                            
-                            # Calculate bull/bear ratio from comments
-                            bulls = sum(1 for s in comment_sentiments if s > 0.2)
-                            bears = sum(1 for s in comment_sentiments if s < -0.2)
-                            total = len(comment_sentiments)
-                            
-                            if total > 0:
-                                recent_bull_ratio.append(bulls / total)
-                                recent_bear_ratio.append(bears / total)
+                    # Add post sentiment if available
+                    if 'sentiment' in post and isinstance(post['sentiment'], dict):
+                        sentiment_value = post['sentiment'].get('compound', 0)
+                        if isinstance(sentiment_value, (int, float)):
+                            recent_sentiments.append(sentiment_value)
+                    
+                    # Process comments if available
+                    if 'comments' in post and post['comments']:
+                        for comment in post['comments']:
+                            if isinstance(comment.get('sentiment'), dict):
+                                comment_sentiment = comment['sentiment'].get('compound', 0)
+                                if isinstance(comment_sentiment, (int, float)):
+                                    recent_sentiments.append(comment_sentiment)
+                                    
+                                    # Classify sentiment
+                                    if comment_sentiment > 0.2:
+                                        recent_bull_ratio.append(1)
+                                        recent_bear_ratio.append(0)
+                                    elif comment_sentiment < -0.2:
+                                        recent_bull_ratio.append(0)
+                                        recent_bear_ratio.append(1)
+                                    else:
+                                        recent_bull_ratio.append(0)
+                                        recent_bear_ratio.append(0)
                 
                 if recent_sentiments:
                     metrics.update({
-                        'recent_sentiment_avg': round(np.mean(recent_sentiments), 4),
-                        'recent_sentiment_std': round(np.std(recent_sentiments), 4),
-                        'recent_bull_ratio': round(np.mean(recent_bull_ratio), 4),
-                        'recent_bear_ratio': round(np.mean(recent_bear_ratio), 4),
-                        'sentiment_momentum_rt': round(
-                            np.mean(recent_sentiments) - metrics.get('sentiment_score', 0),
-                            4
-                        )
+                        'recent_sentiment_avg': float(np.mean(recent_sentiments)),
+                        'recent_sentiment_std': float(np.std(recent_sentiments)) if len(recent_sentiments) > 1 else 0,
+                        'recent_bull_ratio': float(np.mean(recent_bull_ratio)) if recent_bull_ratio else 0.5,
+                        'recent_bear_ratio': float(np.mean(recent_bear_ratio)) if recent_bear_ratio else 0.5,
+                        'sentiment_confidence': len(recent_sentiments)
                     })
-            
-            # Calculate sentiment signal strength (0-100)
-            if metrics:
-                sentiment_signals = [
-                    metrics.get('sentiment_score', 0) > 0,  # Positive sentiment
-                    metrics.get('sentiment_momentum', 0) > 0,  # Positive momentum
-                    metrics.get('avg_bullish_ratio', 0.5) > 0.6,  # Strong bullish ratio
-                    metrics.get('sentiment_consistency', 0) > 0.7,  # Consistent sentiment
-                    metrics.get('recent_sentiment_avg', 0) > 0  # Positive recent sentiment
-                ]
-                
-                metrics['sentiment_strength'] = round(
-                    (sum(1 for signal in sentiment_signals if signal) / len(sentiment_signals)) * 100,
-                    2
-                )
+                    
+                    # Calculate sentiment strength
+                    sentiment_signals = [
+                        metrics['recent_sentiment_avg'] > 0,  # Positive recent sentiment
+                        metrics['recent_bull_ratio'] > 0.6,  # Strong bullish ratio
+                        metrics['sentiment_momentum'] > 0 if 'sentiment_momentum' in metrics else False,
+                        metrics['recent_bear_ratio'] < 0.3,  # Low bearish ratio
+                    ]
+                    
+                    metrics['sentiment_strength'] = float(sum(sentiment_signals) / len(sentiment_signals)) * 100
             
             return metrics
             
         except Exception as e:
             logger.error(f"Error analyzing sentiment metrics for {ticker}: {str(e)}")
             return {}
-    
+
     def _calculate_prediction_probabilities(self, metrics: Dict) -> Dict:
         """Calculate probabilities for different price movement scenarios"""
         try:

@@ -257,7 +257,7 @@ def main():
         "stocks",
         "investing",
         "stockmarket",
-        "robinhood",
+        # "robinhood",
         "Superstonk",
         "ValueInvesting",
         "Wallstreetbetsnew",

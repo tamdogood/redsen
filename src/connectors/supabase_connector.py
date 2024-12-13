@@ -445,58 +445,60 @@ class SupabaseConnector:
             logger.error(f"Error retrieving sentiment trends for {ticker}: {str(e)}")
             return pd.DataFrame()
 
-    def get_recent_posts_by_ticker(
-        self,
-        ticker: str,
-        days: int = 7,
-        limit: int = 100,
-        include_comments: bool = False,
-    ) -> List[Dict]:
-        """Get recent posts for a specific ticker with optional comment inclusion"""
+    def get_recent_posts_by_ticker(self, ticker: str, days: int = 7, include_comments: bool = False) -> List[Dict]:
+        """Get recent posts for a specific ticker with modified query structure"""
         try:
             cutoff_date = (dt.datetime.now() - dt.timedelta(days=days)).isoformat()
-
-            # Build the query
-            query = (
+            
+            # First get post_tickers data
+            tickers_result = (
                 self.supabase.table("post_tickers")
-                .select(
-                    "*, reddit_posts(*),"
-                    + ("post_comments(*)" if include_comments else "")
-                )
+                .select("*, reddit_posts(*)")
                 .eq("ticker", ticker)
                 .gte("mentioned_at", cutoff_date)
                 .order("mentioned_at", desc=True)
-                .limit(limit)
+                .limit(100)
+                .execute()
             )
-
-            result = query.execute()
-
-            # Process the results
-            posts = result.data
-            if not posts:
-                logger.info(f"No recent posts found for ticker {ticker}")
+            
+            if not tickers_result.data:
                 return []
-
-            # Transform the data structure if needed
-            processed_posts = []
-            for post in posts:
-                processed_post = {
-                    **post["reddit_posts"],
+                
+            posts = []
+            for post_ticker in tickers_result.data:
+                if not post_ticker.get('reddit_posts'):
+                    continue
+                    
+                post_data = {
+                    **post_ticker['reddit_posts'],
                     "ticker_mention": {
-                        "ticker": post["ticker"],
-                        "mentioned_at": post["mentioned_at"],
-                    },
+                        "ticker": post_ticker['ticker'],
+                        "mentioned_at": post_ticker['mentioned_at']
+                    }
                 }
+                
+                # If comments are requested, get them separately
                 if include_comments:
-                    processed_post["comments"] = post["post_comments"]
-                processed_posts.append(processed_post)
-
-            return processed_posts
-
+                    try:
+                        comments_result = (
+                            self.supabase.table("post_comments")
+                            .select("*")
+                            .eq("post_id", post_ticker['reddit_posts']['post_id'])
+                            .execute()
+                        )
+                        post_data["comments"] = comments_result.data
+                    except Exception as e:
+                        logger.error(f"Error fetching comments for post {post_ticker['reddit_posts']['post_id']}: {str(e)}")
+                        post_data["comments"] = []
+                        
+                posts.append(post_data)
+                
+            return posts
+            
         except Exception as e:
             logger.error(f"Error retrieving posts for {ticker}: {str(e)}")
             return []
-
+    
     def get_post_comments(self, post_id: str) -> List[Dict]:
         """Get all comments for a specific post"""
         try:
