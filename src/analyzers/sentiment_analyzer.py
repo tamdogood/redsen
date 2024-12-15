@@ -1089,5 +1089,5 @@ class EnhancedStockAnalyzer:
             return metrics
             
         except Exception as e:
-            logger.error(f"Error analyzing sentiment metrics for {ticker}: {str(e)}")
+            logger.error(f" Error analyzing sentiment metrics for {ticker}: {str(e)}")
             return {}

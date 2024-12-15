@@ -35,12 +35,12 @@ def main():
     subreddits_to_analyze = [
         "wallstreetbets",
         "stocks",
-        # "investing",
-        # "stockmarket",
+        "investing",
+        "stockmarket",
         # "robinhood",
-        # "Superstonk",
-        # "ValueInvesting",
-        # "Wallstreetbetsnew",
+        "Superstonk",
+        "ValueInvesting",
+        "Wallstreetbetsnew",
         # "stonks",
         # "XGramatikInsights",
         # "scottsstocks",
@@ -96,6 +96,11 @@ def main():
                     if min_len < 2:  # Need at least 2 points for correlation
                         return 0.0
 
+                    # Check for constant arrays
+                    if len(np.unique(market_returns[-min_len:])) == 1 or len(np.unique(stock_returns[-min_len:])) == 1:
+                        logger.warning(f"Constant returns detected for {ticker} - correlation undefined")
+                        return 0.0
+
                     # Calculate correlation and extract the scalar value
                     corr = stats.pearsonr(
                         market_returns[-min_len:], stock_returns[-min_len:]
@@ -109,7 +114,7 @@ def main():
                 except Exception as e:
                     logger.warning(f"Error calculating correlation for {ticker}: {str(e)}")
                     return 0.0
-
+            
             df["market_correlation"] = df["ticker"].apply(calculate_correlation)
 
         except Exception as e:
@@ -287,15 +292,18 @@ def main():
     #     # analyzer.save_results_to_storage(top_stocks)
         
     # Save results with quality metadata
-    # if os.getenv("SAVE_TO_STORAGE", "0") == "1":
-        # analyzer.save_results_to_storage(top_stocks)
-        # analyzer.db.save_sentiment_analysis(top_stocks)
-    # analyzer.save_results(top_stocks)
+    if os.getenv("SAVE_TO_STORAGE", "0") == "1":
+        analyzer.save_results_to_storage(top_stocks)
+        analyzer.db.save_sentiment_analysis(top_stocks)
+    analyzer.save_results(top_stocks)
 
     # Log summary
-    logger.info(f"Processed {len(combined_results)} unique tickers")
-    logger.info(f"Top ticker by sentiment: {top_stocks.iloc[0]['ticker']}")
-    logger.info(f"Top ticker composite score: {top_stocks.iloc[0]['composite_score']:.2f}")
+    logger.info("Processed %d unique tickers", len(combined_results))
+    logger.info("Top ticker by sentiment: %s", top_stocks.iloc[0]['ticker'])
+    logger.info(
+        "Top ticker composite score: %.2f",
+        top_stocks.iloc[0]['composite_score']
+    )
 
 if __name__ == "__main__":
     main()
