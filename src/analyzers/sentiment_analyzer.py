@@ -729,59 +729,7 @@ class EnhancedStockAnalyzer:
                 'keltner_upper': None,
                 'keltner_lower': None
             }
-
-    def _calculate_weighted_iv(self, options_data: List[Dict]) -> float:
-        """Calculate volume-weighted implied volatility"""
-        try:
-            total_volume = sum(opt.get("volume", 0) for opt in options_data)
-            if total_volume == 0:
-                return 0.0
-
-            weighted_iv = (
-                sum(
-                    opt.get("impliedVolatility", 0) * opt.get("volume", 0)
-                    for opt in options_data
-                )
-                / total_volume
-            )
-
-            return round(weighted_iv * 100, 2)
-
-        except Exception as e:
-            logger.error(f"Error calculating weighted IV: {str(e)}")
-            return 0.0
-
-    def _calculate_max_pain(
-        self, calls: List[Dict], puts: List[Dict], current_price: float
-    ) -> float:
-        """Calculate options max pain price"""
-        try:
-            strike_prices = sorted(
-                list(set([opt.get("strike", 0) for opt in calls + puts]))
-            )
-
-            min_pain = float("inf")
-            max_pain_price = current_price
-
-            for strike in strike_prices:
-                total_pain = sum(
-                    max(0, strike - opt.get("strike", 0)) * opt.get("openInterest", 0)
-                    for opt in calls
-                ) + sum(
-                    max(0, opt.get("strike", 0) - strike) * opt.get("openInterest", 0)
-                    for opt in puts
-                )
-
-                if total_pain < min_pain:
-                    min_pain = total_pain
-                    max_pain_price = strike
-
-            return round(max_pain_price, 2)
-
-        except Exception as e:
-            logger.error(f"Error calculating max pain: {str(e)}")
-            return current_price
-
+            
     def _get_sector_performance(self, ticker: str) -> Dict:
         """
         Get sector and industry performance metrics using Polygon API
@@ -946,7 +894,7 @@ class EnhancedStockAnalyzer:
                 "market_volatility": round(implied_volatility, 2),
                 "market_momentum": round(ta.momentum.rsi(spy_hist['Close']), 2),
                 "market_breadth": self._calculate_market_breadth(),
-                "market_sentiment": self._calculate_market_sentiment_alternative(implied_volatility)
+                "market_sentiment": self._calculate_market_sentiment(implied_volatility)
             }
 
             # self.market_indicators_cache[cache_key] = market_metrics
@@ -956,7 +904,7 @@ class EnhancedStockAnalyzer:
             logger.error(f"Error getting market indicators: {str(e)}")
             return {}
 
-    def _calculate_market_sentiment_alternative(self, volatility: float) -> str:
+    def _calculate_market_sentiment(self, volatility: float) -> str:
         """Calculate market sentiment based on SPY volatility instead of VIX"""
         # Typically, VIX values are about 1.2x the implied volatility calculated from SPY
         # So we'll adjust our thresholds accordingly
@@ -1037,20 +985,7 @@ class EnhancedStockAnalyzer:
                 "advancing_stocks": 0,
                 "declining_stocks": 0
             }
-                
-    def _calculate_market_sentiment(self, vix_level: float) -> str:
-        """Calculate market sentiment based on VIX"""
-        if vix_level >= 30:
-            return "Extremely Fearful"
-        elif vix_level >= 25:
-            return "Fearful"
-        elif vix_level >= 20:
-            return "Neutral"
-        elif vix_level >= 15:
-            return "Complacent"
-        else:
-            return "Extremely Complacent"
-
+            
     def _calculate_composite_scores(self, metrics: Dict) -> Dict:
         """Calculate composite scores for different aspects of analysis"""
         try:
@@ -1285,48 +1220,7 @@ class EnhancedStockAnalyzer:
         except Exception as e:
             logger.error(f"Error scoring profitability: {str(e)}")
             return 0.5
-
-    def _calculate_basic_metrics(self, hist: pd.DataFrame) -> Dict:
-        """
-        Calculate basic price and volume metrics
-
-        Args:
-            hist: Historical price data DataFrame
-        Returns:
-            Dict of calculated metrics
-        """
-        try:
-            current_price = hist["Close"].iloc[-1]
-            price_1w_ago = hist["Close"].iloc[-10]
-            price_1d_ago = hist["Close"].iloc[-2]
-            avg_volume = hist["Volume"].mean()
-
-            # Verify we have valid numerical data
-            if not (
-                pd.notnull(current_price)
-                and pd.notnull(price_1w_ago)
-                and pd.notnull(avg_volume)
-            ):
-                logger.error("Invalid price or volume data")
-                return {}
-
-            return {
-                "current_price": round(current_price, 2),
-                "price_change_1w": round(
-                    ((current_price - price_1w_ago) / price_1w_ago) * 100, 2
-                ),
-                "price_change_1d": round(
-                    ((current_price - price_1d_ago) / price_1d_ago) * 100, 2
-                ),
-                "avg_volume": int(avg_volume),
-                "volume_change": round(
-                    ((hist["Volume"].iloc[-1] - avg_volume) / avg_volume) * 100, 2
-                ),
-            }
-        except Exception as e:
-            logger.error(f"Error calculating basic metrics: {str(e)}")
-            return {}
-
+        
     def _calculate_rsi(self, prices: pd.Series, periods: int = 14) -> float:
         """Calculate RSI technical indicator"""
         delta = prices.diff()
@@ -1391,56 +1285,6 @@ class EnhancedStockAnalyzer:
         except Exception as e:
             logger.error(f"Error calculating price gaps: {str(e)}")
             return {"gap_up": 0.0, "gap_down": 0.0, "gap_type": "None"}
-
-    def _identify_swing_points(
-        self, hist: pd.DataFrame, window: int = 20
-    ) -> Dict[str, float]:
-        """Identify swing high and low points"""
-        try:
-            close = hist["Close"].values
-
-            # Find local maxima and minima
-            max_idx = argrelextrema(close, np.greater, order=window)[0]
-            min_idx = argrelextrema(close, np.less, order=window)[0]
-
-            # Get the most recent swing points
-            recent_high = close[max_idx[-1]] if len(max_idx) > 0 else close[-1]
-            recent_low = close[min_idx[-1]] if len(min_idx) > 0 else close[-1]
-
-            return {
-                "swing_high": round(float(recent_high), 2),
-                "swing_low": round(float(recent_low), 2),
-            }
-
-        except Exception as e:
-            logger.error(f"Error identifying swing points: {str(e)}")
-            return {"swing_high": 0.0, "swing_low": 0.0}
-
-    def _calculate_pivot_points(self, hist: pd.DataFrame) -> Dict[str, float]:
-        """Calculate floor trader pivot points"""
-        try:
-            last_day = hist.iloc[-1]
-            high = last_day["High"]
-            low = last_day["Low"]
-            close = last_day["Close"]
-
-            pivot = (high + low + close) / 3
-            r1 = (2 * pivot) - low
-            r2 = pivot + (high - low)
-            s1 = (2 * pivot) - high
-            s2 = pivot - (high - low)
-
-            return {
-                "pivot": round(pivot, 2),
-                "r1": round(r1, 2),
-                "r2": round(r2, 2),
-                "s1": round(s1, 2),
-                "s2": round(s2, 2),
-            }
-
-        except Exception as e:
-            logger.error(f"Error calculating pivot points: {str(e)}")
-            return {"pivot": 0.0, "r1": 0.0, "r2": 0.0, "s1": 0.0, "s2": 0.0}
 
     def _calculate_price_metrics(self, hist: pd.DataFrame) -> Dict:
         """Calculate comprehensive price-based metrics with data validation"""
@@ -2523,243 +2367,6 @@ class EnhancedStockAnalyzer:
             sentiment_data["correlations"] = {}
 
         return json.loads(json.dumps(sentiment_data, cls=CustomJSONEncoder))
-
-    # Modeling Functions
-    def _calculate_prediction_features(self, hist: pd.DataFrame) -> Dict:
-        """Calculate comprehensive features for prediction modeling"""
-        try:
-            features = {}
-            close = hist['Close']
-            volume = hist['Volume']
-            high = hist['High']
-            low = hist['Low']
-
-            # Price Movement Features
-            features.update({
-                # Trend Strength Indicators
-                'adx_14': round(ta.trend.adx(high, low, close, window=14), 2),
-                'cci_20': round(ta.trend.cci(high, low, close, window=20), 2),
-                'dpo_20': round(ta.trend.dpo(close, window=20), 2),
-                'trix_30': round(ta.trend.trix(close, window=30), 2),
-                
-                # Momentum Features
-                'rsi_14': round(ta.momentum.rsi(close, window=14), 2),
-                'stoch_k': round(ta.momentum.stoch(high, low, close), 2),
-                'stoch_d': round(ta.momentum.stoch_signal(high, low, close), 2),
-                'williams_r': round(ta.momentum.williams_r(high, low, close), 2),
-                'ultimate_osc': round(ta.momentum.ultimate_oscillator(high, low, close), 2),
-                
-                # Volatility Features
-                'bbands_upper': round(ta.volatility.bollinger_hband(close), 2),
-                'bbands_lower': round(ta.volatility.bollinger_lband(close), 2),
-                'atr_14': round(ta.volatility.average_true_range(high, low, close), 4),
-                'keltner_upper': self._calculate_keltner_channels(hist)['keltner_upper'],
-                'keltner_lower': self._calculate_keltner_channels(hist)['keltner_lower'],
-                
-                # Volume Features
-                'obv': round(ta.volume.on_balance_volume(close, volume), 2),
-                'mfi_14': round(ta.volume.money_flow_index(high, low, close, volume), 2),
-                'vwap': round(ta.volume.volume_weighted_average_price(high, low, close, volume), 2),
-                
-                # Price Pattern Features
-                'price_gaps': self._calculate_price_gaps(hist),
-                'swing_points': self._identify_swing_points(hist),
-                'support_resistance': self._calculate_support_resistance(hist),
-                
-                # Custom Ratios and Indicators
-                'close_to_high_ratio': round(close.iloc[-1] / high.rolling(20).max().iloc[-1], 4),
-                'close_to_low_ratio': round(close.iloc[-1] / low.rolling(20).min().iloc[-1], 4),
-                'volume_price_trend': round((volume * close).pct_change().mean(), 4),
-                
-                # Mean Reversion Features
-                'zscore_20': round((close - close.rolling(20).mean()) / close.rolling(20).std(), 2).iloc[-1],
-                'pct_from_sma50': round((close.iloc[-1] / close.rolling(50).mean().iloc[-1] - 1) * 100, 2),
-                'pct_from_sma200': round((close.iloc[-1] / close.rolling(200).mean().iloc[-1] - 1) * 100, 2)
-            })
-            
-            # Add Advanced Pattern Recognition
-            features.update(self._identify_candlestick_patterns(hist))
-            features.update(self._calculate_fibonacci_levels(hist))
-            
-            # Add Relative Strength Features
-            features.update(self._calculate_relative_strength_features(hist))
-            
-            # Add Sentiment-Price Correlation Features
-            features.update(self._calculate_sentiment_price_features(hist))
-            
-            return features
-            
-        except Exception as e:
-            logger.error(f"Error calculating prediction features: {str(e)}")
-            return {}
-
-    def _identify_candlestick_patterns(self, hist: pd.DataFrame) -> Dict:
-        """Identify candlestick patterns"""
-        try:
-            patterns = {}
-            open_prices = hist['Open']
-            high = hist['High']
-            low = hist['Low']
-            close = hist['Close']
-            
-            # Single Candlestick Patterns
-            patterns.update({
-                'doji': ta.candles.doji(open_prices, high, low, close),
-                'hammer': ta.candles.hammer(open_prices, high, low, close),
-                'shooting_star': ta.candles.shooting_star(open_prices, high, low, close),
-                'marubozu': ta.candles.marubozu(open_prices, high, low, close)
-            })
-            
-            # Multiple Candlestick Patterns
-            patterns.update({
-                'engulfing': ta.candles.engulfing(open_prices, high, low, close),
-                'morning_star': ta.candles.morning_star(open_prices, high, low, close),
-                'evening_star': ta.candles.evening_star(open_prices, high, low, close),
-                'three_white_soldiers': ta.candles.three_white_soldiers(open_prices, high, low, close)
-            })
-            
-            return {k: int(v.iloc[-1]) for k, v in patterns.items()}
-            
-        except Exception as e:
-            logger.error(f"Error identifying candlestick patterns: {str(e)}")
-            return {}
-
-    def _calculate_fibonacci_levels(self, hist: pd.DataFrame) -> Dict:
-        """Calculate Fibonacci retracement and extension levels"""
-        try:
-            high = hist['High'].iloc[-20:].max()
-            low = hist['Low'].iloc[-20:].min()
-            current = hist['Close'].iloc[-1]
-            
-            # Fibonacci ratios
-            ratios = [0.236, 0.382, 0.5, 0.618, 0.786]
-            
-            # Calculate retracement levels
-            range_size = high - low
-            retracement_levels = {
-                f'fib_ret_{int(ratio*1000)}': round(high - (ratio * range_size), 2)
-                for ratio in ratios
-            }
-            
-            # Calculate distance to each level
-            level_distances = {
-                f'dist_to_fib_{int(ratio*1000)}': round(
-                    abs(current - retracement_levels[f'fib_ret_{int(ratio*1000)}']) / current * 100, 2
-                )
-                for ratio in ratios
-            }
-            
-            return {**retracement_levels, **level_distances}
-            
-        except Exception as e:
-            logger.error(f"Error calculating Fibonacci levels: {str(e)}")
-            return {}
-
-    def _calculate_relative_strength_features(self, hist: pd.DataFrame) -> Dict:
-        """Calculate relative strength features compared to market and sector"""
-        try:
-            # Get SPY data for market comparison
-            spy_data = self.market_data.get_stock_data("SPY", days=180)
-            if not spy_data:
-                return {}
-                
-            stock_returns = hist['Close'].pct_change()
-            market_returns = spy_data['history']['Close'].pct_change()
-            
-            # Calculate relative strength features
-            features = {
-                'rs_1m': round(
-                    (stock_returns.tail(21).mean() / market_returns.tail(21).mean()), 4
-                ),
-                'rs_3m': round(
-                    (stock_returns.tail(63).mean() / market_returns.tail(63).mean()), 4
-                ),
-                'rs_momentum': round(
-                    (stock_returns.tail(5).mean() / market_returns.tail(5).mean()), 4
-                ),
-                'beta': self._calculate_beta(stock_returns, market_returns),
-                'correlation': round(stock_returns.corr(market_returns), 4)
-            }
-            
-            return features
-            
-        except Exception as e:
-            logger.error(f"Error calculating relative strength features: {str(e)}")
-            return {}
-
-    def _calculate_sentiment_price_features(self, hist: pd.DataFrame) -> Dict:
-        """Calculate features relating sentiment to price movements"""
-        try:
-            features = {}
-            
-            # Get recent sentiment data
-            sentiment_trends = self.db.get_sentiment_trends(
-                ticker=hist.index.name,
-                days=30,
-                include_technicals=True
-            )
-            
-            if not sentiment_trends.empty:
-                # Calculate sentiment momentum
-                sentiment_trends['sentiment_ma5'] = sentiment_trends['comment_sentiment_avg'].rolling(5).mean()
-                sentiment_trends['sentiment_ma20'] = sentiment_trends['comment_sentiment_avg'].rolling(20).mean()
-                
-                # Calculate sentiment-price correlation features
-                price_changes = hist['Close'].pct_change()
-                sentiment_changes = sentiment_trends['comment_sentiment_avg'].pct_change()
-                
-                features.update({
-                    'sentiment_price_corr': round(
-                        sentiment_changes.corr(price_changes), 4
-                    ),
-                    'sentiment_momentum': round(
-                        sentiment_trends['sentiment_ma5'].iloc[-1] 
-                        - sentiment_trends['sentiment_ma20'].iloc[-1], 4
-                    ),
-                    'sentiment_volatility': round(
-                        sentiment_changes.std() * np.sqrt(252), 4
-                    ),
-                    'bullish_ratio_ma5': round(
-                        sentiment_trends['bullish_comments_ratio'].rolling(5).mean().iloc[-1], 4
-                    ) if 'bullish_comments_ratio' in sentiment_trends.columns else 0
-                })
-                
-            return features
-            
-        except Exception as e:
-            logger.error(f"Error calculating sentiment-price features: {str(e)}")
-            return {}
-
-    def analyze_complete_metrics(self, ticker: str) -> Dict:
-        """Perform complete analysis including prediction features"""
-        try:
-            metrics = {}
-            
-            # Get base metrics
-            base_metrics = self.get_stock_metrics(ticker)
-            if base_metrics:
-                metrics.update(base_metrics)
-                
-            # Get sentiment metrics
-            sentiment_metrics = self._analyze_sentiment_metrics(ticker)
-            metrics.update(sentiment_metrics)
-            
-            # Calculate prediction features
-            if 'history' in base_metrics:
-                prediction_features = self._calculate_prediction_features(base_metrics['history'])
-                metrics.update(prediction_features)
-                
-            # Calculate composite scores
-            metrics.update(self._calculate_composite_scores(metrics))
-            
-            # Add prediction probabilities
-            metrics.update(self._calculate_prediction_probabilities(metrics))
-            
-            return metrics
-            
-        except Exception as e:
-            logger.error(f"Error in complete metrics analysis: {str(e)}")
-            return {}
 
     def get_recent_posts_by_ticker(self, ticker: str, days: int = 7, include_comments: bool = False) -> List[Dict]:
         """
