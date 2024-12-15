@@ -23,226 +23,6 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-def prepare_prediction_features(analyzer, ticker_data: pd.DataFrame, prediction_window: int = 5) -> tuple:
-    """
-    Prepare feature matrix and target vector for model training
-    
-    Args:
-        analyzer: EnhancedStockAnalyzer instance
-        ticker_data: DataFrame with ticker analysis
-        prediction_window: Days ahead to predict
-    
-    Returns:
-        Tuple of (feature_matrix, target_vector)
-    """
-    feature_data = []
-    targets = []
-    logger.info("Preparing prediction features...")
-    
-    for _, row in ticker_data.iterrows():
-        ticker = row['ticker']
-        try:
-            # Get complete metrics including prediction features
-            metrics = analyzer.analyze_complete_metrics(ticker)
-            if not metrics:
-                continue
-                
-            # Get historical data for target calculation
-            stock_data = analyzer.get_stock_metrics(ticker)
-            if not stock_data or 'history' not in stock_data:
-                continue
-                
-            hist = stock_data['history']
-            future_return = hist['Close'].pct_change(prediction_window).shift(-prediction_window)
-            
-            if len(future_return) > prediction_window:
-                # Target: 1 for positive return, 0 for negative
-                target = 1 if future_return.iloc[-prediction_window-1] > 0 else 0
-                
-                # Extract all available features
-                features = {
-                    # Price Features
-                    'current_price': metrics.get('current_price', 0),
-                    'price_change_1d': metrics.get('price_change_1d', 0),
-                    'price_change_1w': metrics.get('price_change_1w', 0),
-                    'price_change_1m': metrics.get('price_change_1m', 0),
-                    
-                    # Technical Indicators
-                    'rsi_14': metrics.get('rsi_14', 50),
-                    'adx_14': metrics.get('adx_14', 20),
-                    'cci_20': metrics.get('cci_20', 0),
-                    'mfi_14': metrics.get('mfi_14', 50),
-                    'williams_r': metrics.get('williams_r', -50),
-                    'ultimate_osc': metrics.get('ultimate_osc', 50),
-                    'stoch_k': metrics.get('stoch_k', 50),
-                    'stoch_d': metrics.get('stoch_d', 50),
-                    
-                    # Volatility Metrics
-                    'atr_14': metrics.get('atr_14', 0),
-                    'bbands_upper': metrics.get('bbands_upper', 0),
-                    'bbands_lower': metrics.get('bbands_lower', 0),
-                    'zscore_20': metrics.get('zscore_20', 0),
-                    
-                    # Volume Metrics
-                    'volume_price_trend': metrics.get('volume_price_trend', 0),
-                    'obv': metrics.get('obv', 0),
-                    'volume_ratio': metrics.get('volume_ratio', 1),
-                    'mfi_14': metrics.get('mfi_14', 50),
-                    
-                    # Sentiment Metrics
-                    'comment_sentiment_avg': row.get('comment_sentiment_avg', 0),
-                    'bullish_comments_ratio': row.get('bullish_comments_ratio', 0.5),
-                    'bearish_comments_ratio': row.get('bearish_comments_ratio', 0.5),
-                    'sentiment_momentum': metrics.get('sentiment_momentum', 0),
-                    'sentiment_volatility': metrics.get('sentiment_volatility', 0),
-                    
-                    # Market Context
-                    'market_correlation': row.get('market_correlation', 0),
-                    'beta': metrics.get('beta', 1),
-                    'rs_1m': metrics.get('rs_1m', 1),
-                    
-                    # Pattern Recognition
-                    'trend_strength': metrics.get('trend_strength', 50),
-                    'volatility_probability': metrics.get('volatility_probability', 50)
-                }
-                
-                feature_data.append(features)
-                targets.append(target)
-                
-        except Exception as e:
-            logger.warning(f"Error processing {ticker}: {str(e)}")
-            continue
-            
-    return pd.DataFrame(feature_data), np.array(targets)
-
-def train_prediction_models(X: pd.DataFrame, y: np.ndarray, model_dir: str = 'models'):
-    """
-    Train and evaluate multiple prediction models
-    
-    Args:
-        X: Feature matrix
-        y: Target vector
-        model_dir: Directory to save trained models
-    
-    Returns:
-        Dict containing model results and evaluations
-    """
-    logger.info("Training prediction models...")
-    
-    # Create model directory if it doesn't exist
-    Path(model_dir).mkdir(parents=True, exist_ok=True)
-    
-    # Scale features
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    X_scaled = pd.DataFrame(X_scaled, columns=X.columns)
-    
-    # Split data
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_scaled, y, test_size=0.2, random_state=42
-    )
-    
-    # Define models to train
-    models = {
-        'random_forest': RandomForestClassifier(
-            n_estimators=100,
-            max_depth=10,
-            min_samples_split=5,
-            random_state=42
-        ),
-        'gradient_boosting': GradientBoostingClassifier(
-            n_estimators=100,
-            max_depth=5,
-            learning_rate=0.1,
-            random_state=42
-        ),
-        'adaboost': AdaBoostClassifier(
-            n_estimators=100,
-            learning_rate=0.1,
-            random_state=42
-        )
-    }
-    
-    results = {}
-    for name, model in models.items():
-        logger.info(f"Training {name} model...")
-        
-        # Train model
-        model.fit(X_train, y_train)
-        
-        # Evaluate
-        train_score = model.score(X_train, y_train)
-        test_score = model.score(X_test, y_test)
-        
-        # Get predictions
-        y_pred = model.predict(X_test)
-        
-        # Calculate feature importance
-        importance = pd.DataFrame({
-            'feature': X.columns,
-            'importance': model.feature_importances_
-        }).sort_values('importance', ascending=False)
-        
-        # Save results
-        results[name] = {
-            'model': model,
-            'train_score': train_score,
-            'test_score': test_score,
-            'feature_importance': importance,
-            'classification_report': classification_report(y_test, y_pred),
-            'confusion_matrix': confusion_matrix(y_test, y_pred).tolist()
-        }
-        
-        # Save model and scaler
-        joblib.dump(model, f'{model_dir}/{name}_model.joblib')
-        joblib.dump(scaler, f'{model_dir}/feature_scaler.joblib')
-        
-    return results
-
-def predict_top_stocks(models, scaler, analyzer, top_stocks: pd.DataFrame) -> pd.DataFrame:
-    """
-    Make predictions for top stocks using trained models
-    
-    Args:
-        models: Dict of trained models
-        scaler: Fitted StandardScaler
-        analyzer: EnhancedStockAnalyzer instance
-        top_stocks: DataFrame of top stocks
-        
-    Returns:
-        DataFrame with predictions
-    """
-    logger.info("Making predictions for top stocks...")
-    
-    # Prepare features for prediction
-    X_pred, _ = prepare_prediction_features(analyzer, top_stocks)
-    
-    if len(X_pred) == 0:
-        logger.warning("No valid prediction features found")
-        return top_stocks
-        
-    # Scale features
-    X_pred_scaled = scaler.transform(X_pred)
-    
-    # Make predictions with each model
-    for name, model_results in models.items():
-        model = model_results['model']
-        
-        # Get probabilities and predictions
-        pred_proba = model.predict_proba(X_pred_scaled)
-        predictions = model.predict(X_pred_scaled)
-        
-        # Add to DataFrame
-        top_stocks[f'{name}_up_probability'] = pred_proba[:, 1]
-        top_stocks[f'{name}_prediction'] = predictions
-        
-    # Calculate ensemble prediction
-    prob_columns = [col for col in top_stocks.columns if 'up_probability' in col]
-    top_stocks['ensemble_up_probability'] = top_stocks[prob_columns].mean(axis=1)
-    top_stocks['ensemble_prediction'] = (top_stocks['ensemble_up_probability'] > 0.5).astype(int)
-    
-    return top_stocks
-
 def main():
     analyzer = EnhancedStockAnalyzer(
         os.getenv("CLIENT_ID", ""),
@@ -447,69 +227,70 @@ def main():
     logger.info("Preparing data for model training...")
     
     # Prepare features and targets
-    X, y = prepare_prediction_features(analyzer, combined_results)
+    # X, y = prepare_prediction_features(analyzer, combined_results)
     
-    if len(X) > 0:
-        # Train models
-        model_results = train_prediction_models(X, y)
+    # if len(X) > 0:
+    #     # Train models
+    #     model_results = train_prediction_models(X, y)
         
-        # Load scaler for predictions
-        scaler = joblib.load('models/feature_scaler.joblib')
+    #     # Load scaler for predictions
+    #     scaler = joblib.load('models/feature_scaler.joblib')
         
-        # Make predictions for top stocks
-        top_stocks = predict_top_stocks(model_results, scaler, analyzer, top_stocks)
+    #     # Make predictions for top stocks
+    #     top_stocks = predict_top_stocks(model_results, scaler, analyzer, top_stocks)
         
-        # Save enhanced results
-        timestamp = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
-        results_dir = f'results/{timestamp}'
-        Path(results_dir).mkdir(parents=True, exist_ok=True)
+    #     # Save enhanced results
+    #     timestamp = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
+    #     results_dir = f'results/{timestamp}'
+    #     Path(results_dir).mkdir(parents=True, exist_ok=True)
         
-        # Save prediction results
-        prediction_results = {
-            'timestamp': timestamp,
-            'model_performance': {
-                name: {
-                    'train_score': results['train_score'],
-                    'test_score': results['test_score'],
-                    'feature_importance': results['feature_importance'].to_dict('records'),
-                    'classification_report': results['classification_report'],
-                    'confusion_matrix': results['confusion_matrix']
-                }
-                for name, results in model_results.items()
-            },
-            'top_stocks': top_stocks.to_dict('records')
-        }
+    #     # Save prediction results
+    #     prediction_results = {
+    #         'timestamp': timestamp,
+    #         'model_performance': {
+    #             name: {
+    #                 'train_score': results['train_score'],
+    #                 'test_score': results['test_score'],
+    #                 'feature_importance': results['feature_importance'].to_dict('records'),
+    #                 'classification_report': results['classification_report'],
+    #                 'confusion_matrix': results['confusion_matrix']
+    #             }
+    #             for name, results in model_results.items()
+    #         },
+    #         'top_stocks': top_stocks.to_dict('records')
+    #     }
         
-        with open(f'{results_dir}/prediction_results.json', 'w') as f:
-            json.dump(prediction_results, f, cls=analyzer.db.CustomJSONEncoder)
+    #     with open(f'{results_dir}/prediction_results.json', 'w') as f:
+    #         json.dump(prediction_results, f, cls=analyzer.db.CustomJSONEncoder)
             
-        # Save enhanced top stocks DataFrame
-        top_stocks.to_csv(f'{results_dir}/top_stocks_with_predictions.csv', index=False)
+    #     # Save enhanced top stocks DataFrame
+    #     top_stocks.to_csv(f'{results_dir}/top_stocks_with_predictions.csv', index=False)
         
-        # Log model performance
-        logger.info("\nModel Performance Summary:")
-        for name, results in model_results.items():
-            logger.info(f"\n{name.upper()} Model:")
-            logger.info(f"Train Score: {results['train_score']:.4f}")
-            logger.info(f"Test Score: {results['test_score']:.4f}")
-            logger.info("\nTop 5 Important Features:")
-            logger.info(results['feature_importance'].head().to_string())
+    #     # Log model performance
+    #     logger.info("\nModel Performance Summary:")
+    #     for name, results in model_results.items():
+    #         logger.info(f"\n{name.upper()} Model:")
+    #         logger.info(f"Train Score: {results['train_score']:.4f}")
+    #         logger.info(f"Test Score: {results['test_score']:.4f}")
+    #         logger.info("\nTop 5 Important Features:")
+    #         logger.info(results['feature_importance'].head().to_string())
               
-        # Log top predictions
-        logger.info("\nTop 5 Stocks by Ensemble Probability:")
-        top_predictions = top_stocks.nlargest(5, 'ensemble_up_probability')
-        for _, row in top_predictions.iterrows():
-            logger.info(
-                f"{row['ticker']}: {row['ensemble_up_probability']:.2%} probability of increase"
-            )
-    else:
-        logger.warning("Insufficient data for model training")
-        # analyzer.save_results_to_storage(top_stocks)
+    #     # Log top predictions
+    #     logger.info("\nTop 5 Stocks by Ensemble Probability:")
+    #     top_predictions = top_stocks.nlargest(5, 'ensemble_up_probability')
+    #     for _, row in top_predictions.iterrows():
+    #         logger.info(
+    #             f"{row['ticker']}: {row['ensemble_up_probability']:.2%} probability of increase"
+    #         )
+    # else:
+    #     logger.warning("Insufficient data for model training")
+    #     # analyzer.save_results_to_storage(top_stocks)
         
     # Save results with quality metadata
-    # analyzer.save_results_to_storage(top_stocks)
-    analyzer.save_results(top_stocks)
-    # analyzer.db.save_sentiment_analysis(top_stocks)
+    # if os.getenv("SAVE_TO_STORAGE", "0") == "1":
+        # analyzer.save_results_to_storage(top_stocks)
+        # analyzer.db.save_sentiment_analysis(top_stocks)
+    # analyzer.save_results(top_stocks)
 
     # Log summary
     logger.info(f"Processed {len(combined_results)} unique tickers")

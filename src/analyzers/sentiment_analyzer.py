@@ -333,9 +333,6 @@ class EnhancedStockAnalyzer:
             if len(hist) >= 14:
                 volatility_metrics = self._calculate_volatility_metrics(hist)
                 metrics.update(volatility_metrics)
-                
-            # Only calculate momentum indicators if we have enough data
-            if len(hist) >= 14:
                 momentum_metrics = self._calculate_momentum_indicators(hist)
                 metrics.update(momentum_metrics)
                 
@@ -358,7 +355,7 @@ class EnhancedStockAnalyzer:
                 "type": info.get("type")
             }
             metrics.update(fundamental_metrics)
-            
+            print(metrics)
             return metrics
             
         except Exception as e:
@@ -484,67 +481,55 @@ class EnhancedStockAnalyzer:
             logger.error(f"Error in market context calculation: {str(e)}")
             return {}
 
-    def _calculate_options_metrics(self, stock) -> Dict:
-        """Calculate options-based indicators"""
-        metrics = {}
+    def _calculate_relative_strength(self, sector_etf: str) -> float:
+        """
+        Calculate relative strength of sector vs market
+        
+        Args:
+            sector_etf: Sector ETF symbol
+            
+        Returns:
+            float: Relative strength value
+        """
         try:
-            # Get options data
-            options = stock.options
-            if options:
-                current_price = stock.history(period="1d")["Close"].iloc[-1]
-
-                calls_data = []
-                puts_data = []
-
-                for date in options[:2]:  # Look at nearest two expiration dates
-                    opt = stock.option_chain(date)
-                    calls_data.extend(opt.calls.to_dict("records"))
-                    puts_data.extend(opt.puts.to_dict("records"))
-
-                metrics.update(
-                    {
-                        "put_call_ratio": len(puts_data) / max(len(calls_data), 1),
-                        "implied_volatility": self._calculate_weighted_iv(
-                            calls_data + puts_data
-                        ),
-                        "options_volume": sum(
-                            c.get("volume", 0) for c in calls_data + puts_data
-                        ),
-                        "max_pain": self._calculate_max_pain(
-                            calls_data, puts_data, current_price
-                        ),
-                    }
-                )
-
-        except Exception as e:
-            logger.error(f"Error in options metrics calculation: {str(e)}")
-
-        return metrics
-
-    def _calculate_relative_strength(self, ticker: str) -> float:
-        """Calculate relative strength compared to market using Polygon data"""
-        try:
-            # Get stock and market data
-            stock_data = self.market_data.get_stock_data(ticker, days=180)
-            spy_data = self.market_data.get_stock_data("SPY", days=180)
-
-            if not stock_data or not spy_data:
-                return 0.0
-
-            stock_hist = stock_data['history']['Close']
-            market_hist = spy_data['history']['Close']
-
-            # Calculate returns
-            stock_returns = stock_hist.pct_change()
-            market_returns = market_hist.pct_change()
-
-            relative_strength = (stock_returns.mean() / market_returns.mean()) * 100
-            return round(relative_strength, 2)
-
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=30)
+            
+            # Get sector and market data
+            sector_data = self.market_data.get_aggregates(
+                ticker=sector_etf,
+                multiplier=1,
+                timespan="day",
+                from_date=start_date.strftime("%Y-%m-%d"),
+                to_date=end_date.strftime("%Y-%m-%d")
+            )
+            
+            market_data = self.market_data.get_aggregates(
+                ticker="SPY",
+                multiplier=1,
+                timespan="day",
+                from_date=start_date.strftime("%Y-%m-%d"),
+                to_date=end_date.strftime("%Y-%m-%d")
+            )
+            
+            if sector_data is None or market_data is None:
+                return 1.0
+                
+            # Calculate relative performance
+            sector_return = (sector_data['close'].iloc[-1] / sector_data['close'].iloc[0]) - 1
+            market_return = (market_data['close'].iloc[-1] / market_data['close'].iloc[0]) - 1
+            
+            if market_return == 0:
+                return 1.0
+                
+            relative_strength = (1 + sector_return) / (1 + market_return)
+            
+            return round(relative_strength, 3)
+            
         except Exception as e:
             logger.error(f"Error calculating relative strength: {str(e)}")
-            return 0.0
-
+            return 1.0
+    
     def _calculate_beta(self, ticker: str) -> float:
         """Calculate beta coefficient using Polygon data"""
         try:
@@ -798,56 +783,145 @@ class EnhancedStockAnalyzer:
             return current_price
 
     def _get_sector_performance(self, ticker: str) -> Dict:
-        """Get sector and industry performance metrics"""
+        """
+        Get sector and industry performance metrics using Polygon API
+        
+        Args:
+            ticker: Stock symbol
+            
+        Returns:
+            Dict containing sector performance metrics
+        """
         try:
-            # if ticker in self.sector_performance_cache:
-                # return self.sector_performance_cache[ticker]
-
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            sector = info.get("sector", "")
-            industry = info.get("industry", "")
-
-            # Get sector ETF performance
+            # Get stock details from Polygon
+            ticker_details = self.market_data.client.get_ticker_details(ticker)
+            if not ticker_details:
+                return {}
+                
+            sector = ticker_details.sic_description or ""  # Get sector from SIC description
+            industry = ticker_details.industry or ""
+            
+            # Map SIC sectors to ETFs
             sector_etfs = {
                 "Technology": "XLK",
-                "Financial": "XLF",
+                "Finance": "XLF",
                 "Healthcare": "XLV",
-                "Consumer Cyclical": "XLY",
-                "Consumer Defensive": "XLP",
+                "Consumer": "XLY",
+                "Consumer Products": "XLP",
                 "Energy": "XLE",
                 "Industrial": "XLI",
                 "Materials": "XLB",
                 "Real Estate": "XLRE",
                 "Utilities": "XLU",
-                "Communication Services": "XLC",
+                "Communications": "XLC",
             }
-
-            sector_etf = sector_etfs.get(sector, "SPY")
-            etf_data = yf.Ticker(sector_etf).history(period="1mo")
-
+            
+            # Find the best matching sector ETF
+            sector_etf = "SPY"  # Default to SPY
+            for key, etf in sector_etfs.items():
+                if key.lower() in sector.lower():
+                    sector_etf = etf
+                    break
+            
+            # Get ETF performance data
+            end_date = dt.datetime.now()
+            start_date = end_date - dt.timedelta(days=30)
+            
+            etf_aggs = self.market_data.get_aggregates(
+                ticker=sector_etf,
+                multiplier=1,
+                timespan="day",
+                from_date=start_date.strftime("%Y-%m-%d"),
+                to_date=end_date.strftime("%Y-%m-%d")
+            )
+            
+            if etf_aggs is None or etf_aggs.empty:
+                return {
+                    "sector": sector,
+                    "industry": industry,
+                    "sector_performance_1m": 0,
+                    "sector_relative_strength": 0,
+                    "sector_volatility": 0
+                }
+            
+            # Calculate sector performance metrics
             sector_metrics = {
                 "sector": sector,
                 "industry": industry,
                 "sector_performance_1m": round(
-                    ((etf_data["Close"].iloc[-1] / etf_data["Close"].iloc[0]) - 1)
-                    * 100,
-                    2,
+                    ((etf_aggs['close'].iloc[-1] / etf_aggs['close'].iloc[0]) - 1) * 100,
+                    2
                 ),
-                "sector_relative_strength": self._calculate_relative_strength(
-                    sector_etf
-                ),
+                "sector_relative_strength": self._calculate_relative_strength(sector_etf),
                 "sector_volatility": round(
-                    etf_data["Close"].pct_change().std() * np.sqrt(252) * 100, 2
-                ),
+                    etf_aggs['close'].pct_change().std() * np.sqrt(252) * 100,
+                    2
+                )
             }
-
-            # self.sector_performance_cache[ticker] = sector_metrics
+            
+            # Add additional sector metrics
+            try:
+                # Calculate sector momentum
+                sector_metrics["sector_momentum"] = round(
+                    etf_aggs['close'].pct_change(5).mean() * 100,  # 5-day momentum
+                    2
+                )
+                
+                # Calculate sector volume trend
+                avg_volume = etf_aggs['volume'].mean()
+                recent_volume = etf_aggs['volume'].tail(5).mean()
+                sector_metrics["sector_volume_trend"] = round(
+                    (recent_volume / avg_volume - 1) * 100,
+                    2
+                )
+                
+                # Calculate sector volatility trend
+                recent_volatility = etf_aggs['close'].pct_change().tail(5).std() * np.sqrt(252) * 100
+                sector_metrics["sector_volatility_trend"] = round(
+                    recent_volatility - sector_metrics["sector_volatility"],
+                    2
+                )
+                
+                # Add sector moving averages
+                sector_metrics.update({
+                    "sector_sma20": round(
+                        etf_aggs['close'].rolling(20).mean().iloc[-1],
+                        2
+                    ),
+                    "sector_sma50": round(
+                        etf_aggs['close'].rolling(50).mean().iloc[-1],
+                        2
+                    ) if len(etf_aggs) >= 50 else None
+                })
+                
+                # Calculate sector strength score (0-100)
+                strength_factors = [
+                    sector_metrics["sector_performance_1m"] > 0,  # Positive performance
+                    sector_metrics["sector_momentum"] > 0,  # Positive momentum
+                    sector_metrics["sector_volume_trend"] > 0,  # Increasing volume
+                    etf_aggs['close'].iloc[-1] > sector_metrics["sector_sma20"],  # Above SMA20
+                    sector_metrics["sector_relative_strength"] > 1  # Strong vs market
+                ]
+                
+                sector_metrics["sector_strength_score"] = round(
+                    (sum(1 for x in strength_factors if x) / len(strength_factors)) * 100,
+                    2
+                )
+                
+            except Exception as e:
+                logger.debug(f"Error calculating additional sector metrics: {str(e)}")
+            
             return sector_metrics
-
+            
         except Exception as e:
-            logger.error(f"Error getting sector performance: {str(e)}")
-            return {}
+            logger.error(f"Error getting sector performance for {ticker}: {str(e)}")
+            return {
+                "sector": "",
+                "industry": "",
+                "sector_performance_1m": 0,
+                "sector_relative_strength": 0,
+                "sector_volatility": 0
+            }
 
     def _get_market_indicators(self) -> Dict:
         """Get broad market indicators using Polygon data with fallback options"""
@@ -1279,46 +1353,7 @@ class EnhancedStockAnalyzer:
         except Exception as e:
             logger.warning(f"Error fetching fundamental metrics: {str(e)}")
             return {}
-
-    def _get_market_metrics(self, stock) -> Dict:
-        """Get market-related metrics for a stock"""
-        try:
-            info = stock.info
-            return {
-                "target_price": info.get("targetMeanPrice"),
-                "recommendation": info.get("recommendationKey"),
-                "analyst_count": info.get("numberOfAnalystOpinions"),
-                "short_ratio": info.get("shortRatio"),
-                "relative_volume": info.get("regularMarketVolume", 0)
-                / (info.get("averageVolume", 1) or 1),
-            }
-        except Exception as e:
-            logger.warning(f"Error fetching market metrics: {str(e)}")
-            return {}
-
-    def calculate_technical_indicators(self, hist: pd.DataFrame) -> Dict:
-        """Calculate comprehensive technical indicators"""
-        try:
-            close = hist["Close"]
-            volume = hist["Volume"]
-
-            return {
-                # Trend Indicators
-                "sma_20": round(close.rolling(window=20).mean().iloc[-1], 2),
-                "ema_9": round(close.ewm(span=9).mean().iloc[-1], 2),
-                "rsi": round(self._calculate_rsi(close), 2),
-                # Volatility Indicators
-                "volatility": round(close.pct_change().std() * np.sqrt(252) * 100, 2),
-                # Volume Indicators
-                "volume_sma": round(volume.rolling(window=20).mean().iloc[-1], 2),
-                "volume_ratio": round(
-                    volume.iloc[-1] / volume.rolling(window=20).mean().iloc[-1], 2
-                ),
-            }
-        except Exception as e:
-            logger.warning(f"Error calculating technical indicators: {str(e)}")
-            return {}
-
+        
     def _calculate_price_gaps(self, hist: pd.DataFrame) -> Dict[str, Union[float, str]]:
         """Calculate and classify price gaps in the data"""
         try:
@@ -1547,7 +1582,8 @@ class EnhancedStockAnalyzer:
             ]
 
         # Save posts by ticker
-        # self.save_posts_by_ticker(sentiment_data, subreddit_name)
+        # if os.getenv("SAVE_TO_STORAGE", "0") == "1":
+            # self.save_posts_by_ticker(sentiment_data, subreddit_name)
 
         return sentiment_data
 
@@ -1707,20 +1743,6 @@ class EnhancedStockAnalyzer:
 
             # Get basic sentiment features
             basic_features = self._get_basic_sentiment_features(text)
-
-            # # Get LLM sentiment if text is substantial enough (e.g., > 50 chars)
-            # llm_sentiment = {}
-            # if len(text) > 50:
-            #     try:
-            #         llm_sentiment = self._get_llm_sentiment(text)
-            #     except Exception as e:
-            #         logger.warning(f"LLM sentiment analysis failed: {str(e)}")
-            #         llm_sentiment = {
-            #             "score": 0,
-            #             "features": {},
-            #             "confidence": 0,
-            #             "terms": [],
-            #         }
 
             # Combine base scores with adjustments
             base_score = vader_scores["compound"]
@@ -1999,87 +2021,6 @@ class EnhancedStockAnalyzer:
         # Ensure weight is within bounds
         return min(max(final_weight, 0.5), 2.0)
 
-    # def _get_llm_sentiment(self, text: str) -> Dict:
-    #     """Get sentiment analysis from OpenAI with proper schema validation"""
-    #     try:
-    #         # Generate hash of the text for deduplication
-    #         text_hash = hashlib.sha256(text.encode()).hexdigest()
-
-    #         # Check cache
-    #         existing_analysis = self.db.get_llm_sentiment(text_hash)
-    #         if existing_analysis:
-    #             return {
-    #                 "score": existing_analysis["sentiment_score"],
-    #                 "features": existing_analysis["features"],
-    #                 "confidence": existing_analysis["confidence_score"],
-    #                 "terms": existing_analysis["terms"],
-    #             }
-
-    #         start_time = time.time()
-
-    #         system_message = {
-    #             "role": "system",
-    #             "content": """You are a financial analyst expert in market sentiment analysis.
-    #             Analyze the given text and provide a structured sentiment analysis response.
-    #             Ensure all numeric values are within their specified ranges.""",
-    #         }
-
-    #         user_message = {
-    #             "role": "user",
-    #             "content": f"""Analyze the sentiment of this financial text and provide:
-
-    #             Text: {text}
-
-    #             Return a JSON response with the following structure:
-    #             {{
-    #                 "score": <float between -1 and 1>,
-    #             }}""",
-    #         }
-
-    #         # Call OpenAI API with standard JSON response
-    #         response = self.openai_client.chat.completions.create(
-    #             model="gpt-4",
-    #             messages=[system_message, user_message],
-    #             temperature=0,
-    #             # response_format={"type": "json_object"},
-    #         )
-
-    #         processing_time = int((time.time() - start_time) * 1000)
-
-    #         try:
-    #             # Parse the response
-    #             sentiment_result = json.loads(response.choices[0].message.content)
-
-    #             # Validate against schema
-    #             validated_result = SentimentAnalysisResult(**sentiment_result)
-
-    #             # Prepare record for storage
-    #             sentiment_data = {
-    #                 "text_hash": text_hash,
-    #                 "original_text": text,
-    #                 "analysis_timestamp": dt.datetime.now().isoformat(),
-    #                 "sentiment_score": validated_result.score,
-    #                 "raw_response": response.model_dump(),
-    #                 "processing_time_ms": processing_time,
-    #                 "model_version": "gpt-4",
-    #             }
-
-    #             # Store in database
-    #             self.db.save_llm_sentiment(sentiment_data)
-
-    #             return validated_result.model_dump()
-
-    #         except json.JSONDecodeError as e:
-    #             logger.error(f"Error parsing OpenAI response: {str(e)}")
-    #             return {"score": 0, "features": {}, "confidence": 0, "terms": []}
-    #         except ValueError as e:
-    #             logger.error(f"Schema validation error: {str(e)}")
-    #             return {"score": 0, "features": {}, "confidence": 0, "terms": []}
-
-    #     except Exception as e:
-    #         logger.error(f"Error in LLM sentiment analysis: {str(e)}")
-    #         return {"score": 0, "features": {}, "confidence": 0, "terms": []}
-
     def _calculate_technical_indicators(self, hist: pd.DataFrame) -> Dict:
         """Calculate comprehensive technical indicators"""
         try:
@@ -2273,7 +2214,7 @@ class EnhancedStockAnalyzer:
             }
 
             for _, row in df.iterrows():
-                print(row)
+                # print(row)
                 stock_data = {
                     "ticker": str(row["ticker"]),
                     "sentiment_metrics": {
