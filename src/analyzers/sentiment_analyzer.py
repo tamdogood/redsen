@@ -183,7 +183,7 @@ class EnhancedStockAnalyzer:
         except Exception as e:
             logger.warning(f"Ticker validation failed for {ticker}: {str(e)}")
             return False
-            
+           
     def extract_stock_tickers(self, text: str) -> List[str]:
         """
         Extract stock tickers using OpenAI with fallback to regex
@@ -302,7 +302,7 @@ class EnhancedStockAnalyzer:
 
         return list(set(tickers))  # Remove duplicates
 
-    def get_stock_metrics(self, ticker: str) -> Optional[Dict]:
+    def _get_stock_metrics(self, ticker: str) -> Optional[Dict]:
         """Get comprehensive stock metrics with improved data validation"""
         try:
             stock_data = self.market_data.get_stock_data(ticker, days=180)
@@ -450,7 +450,7 @@ class EnhancedStockAnalyzer:
         except Exception as e:
             logger.error(f"Error in volatility metrics calculation: {str(e)}")
             return {}
-        
+
     def _get_market_context(self, ticker: str) -> Dict:
         """Get market context metrics using Polygon data"""
         try:
@@ -994,7 +994,7 @@ class EnhancedStockAnalyzer:
         rs = gain / loss
         return 100 - (100 / (1 + rs.iloc[-1]))
 
-    def get_fundamental_metrics(self, ticker: str) -> Dict:
+    def _get_fundamental_metrics(self, ticker: str) -> Dict:
         """Get fundamental metrics for a stock"""
         try:
             # Get financial ratios from Polygon
@@ -1166,7 +1166,7 @@ class EnhancedStockAnalyzer:
         # Add stock metrics in parallel
         with ThreadPoolExecutor(max_workers=10) as executor:
             future_to_ticker = {
-                executor.submit(self.get_stock_metrics, row["ticker"]): row["ticker"]
+                executor.submit(self._get_stock_metrics, row["ticker"]): row["ticker"]
                 for _, row in sentiment_data.iterrows()
             }
 
