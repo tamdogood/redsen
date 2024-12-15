@@ -33,7 +33,7 @@ def main():
     )
 
     subreddits_to_analyze = [
-        # "wallstreetbets",
+        "wallstreetbets",
         "stocks",
         # "investing",
         # "stockmarket",

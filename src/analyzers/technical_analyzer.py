@@ -444,8 +444,8 @@ class TechnicalAnalyzer:
             float: Relative strength value
         """
         try:
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=30)
+            end_date = dt.datetime.now()
+            start_date = end_date - dt.timedelta(days=30)
             
             # Get sector and market data
             sector_data = self.market_data.get_aggregates(
@@ -681,7 +681,7 @@ class TechnicalAnalyzer:
                 'keltner_upper': None,
                 'keltner_lower': None
             }
-            
+
     def _get_sector_performance(self, ticker: str) -> Dict:
         """
         Get sector and industry performance metrics using Polygon API
@@ -698,8 +698,16 @@ class TechnicalAnalyzer:
             if not ticker_details:
                 return {}
                 
-            sector = ticker_details.sic_description or ""  # Get sector from SIC description
-            industry = ticker_details.industry or ""
+            # Get sector info from SIC description and sector data
+            sector = ""
+            industry = ""
+            
+            if hasattr(ticker_details, 'sic_description'):
+                sector = ticker_details.sic_description or ""
+            
+            # Alternative field for industry classification
+            if hasattr(ticker_details, 'standard_industrial_classification'):
+                industry = ticker_details.standard_industrial_classification.get('industry_title', "")
             
             # Map SIC sectors to ETFs
             sector_etfs = {
@@ -714,16 +722,23 @@ class TechnicalAnalyzer:
                 "Real Estate": "XLRE",
                 "Utilities": "XLU",
                 "Communications": "XLC",
+                "Oil": "XLE",  # Add common variations
+                "Mining": "XLB",
+                "Software": "XLK",
+                "Banking": "XLF",
+                "Insurance": "XLF",
+                "Pharmaceutical": "XLV",
+                "Transportation": "XLI",
             }
             
             # Find the best matching sector ETF
             sector_etf = "SPY"  # Default to SPY
             for key, etf in sector_etfs.items():
-                if key.lower() in sector.lower():
+                if key.lower() in sector.lower() or key.lower() in industry.lower():
                     sector_etf = etf
                     break
             
-            # Get ETF performance data
+            # Rest of the function remains the same...
             end_date = dt.datetime.now()
             start_date = end_date - dt.timedelta(days=30)
             
@@ -822,7 +837,7 @@ class TechnicalAnalyzer:
                 "sector_relative_strength": 0,
                 "sector_volatility": 0
             }
-
+        
     def _get_market_indicators(self) -> Dict:
         """Get broad market indicators using Polygon data with fallback options"""
         try:
