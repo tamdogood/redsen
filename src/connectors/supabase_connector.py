@@ -444,15 +444,25 @@ class SupabaseConnector:
         except Exception as e:
             logger.error(f"Error retrieving sentiment trends for {ticker}: {str(e)}")
             return pd.DataFrame()
-
+        
     def get_recent_posts_by_ticker(self, ticker: str, days: int = 7, include_comments: bool = False) -> List[Dict]:
-        """Get recent posts for a specific ticker with modified query structure"""
+        """
+        Get recent posts for a specific ticker
+        
+        Args:
+            ticker: Stock symbol
+            days: Number of days to look back
+            include_comments: Whether to include post comments
+            
+        Returns:
+            List of post dictionaries
+        """
         try:
             cutoff_date = (dt.datetime.now() - dt.timedelta(days=days)).isoformat()
             
-            # First get post_tickers data
-            tickers_result = (
-                self.supabase.table("post_tickers")
+            # First get the posts that mention this ticker
+            posts_query = (
+                self.db.supabase.table("post_tickers")
                 .select("*, reddit_posts(*)")
                 .eq("ticker", ticker)
                 .gte("mentioned_at", cutoff_date)
@@ -461,11 +471,11 @@ class SupabaseConnector:
                 .execute()
             )
             
-            if not tickers_result.data:
+            if not posts_query.data:
                 return []
                 
             posts = []
-            for post_ticker in tickers_result.data:
+            for post_ticker in posts_query.data:
                 if not post_ticker.get('reddit_posts'):
                     continue
                     
@@ -480,17 +490,17 @@ class SupabaseConnector:
                 # If comments are requested, get them separately
                 if include_comments:
                     try:
-                        comments_result = (
-                            self.supabase.table("post_comments")
+                        comments_query = (
+                            self.db.supabase.table("post_comments")
                             .select("*")
                             .eq("post_id", post_ticker['reddit_posts']['post_id'])
                             .execute()
                         )
-                        post_data["comments"] = comments_result.data
+                        post_data["comments"] = comments_query.data
                     except Exception as e:
                         logger.error(f"Error fetching comments for post {post_ticker['reddit_posts']['post_id']}: {str(e)}")
                         post_data["comments"] = []
-                        
+                
                 posts.append(post_data)
                 
             return posts
