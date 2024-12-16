@@ -33,14 +33,14 @@ def main():
     )
 
     subreddits_to_analyze = [
-        "wallstreetbets",
+        # "wallstreetbets",
         "stocks",
-        "investing",
-        "stockmarket",
+        # "investing",
+        # "stockmarket",
         # "robinhood",
-        "Superstonk",
-        "ValueInvesting",
-        "Wallstreetbetsnew",
+        # "Superstonk",
+        # "ValueInvesting",
+        # "Wallstreetbetsnew",
         # "stonks",
         # "XGramatikInsights",
         # "scottsstocks",
@@ -231,71 +231,12 @@ def main():
 
     logger.info("Preparing data for model training...")
     
-    # Prepare features and targets
-    # X, y = prepare_prediction_features(analyzer, combined_results)
-    
-    # if len(X) > 0:
-    #     # Train models
-    #     model_results = train_prediction_models(X, y)
-        
-    #     # Load scaler for predictions
-    #     scaler = joblib.load('models/feature_scaler.joblib')
-        
-    #     # Make predictions for top stocks
-    #     top_stocks = predict_top_stocks(model_results, scaler, analyzer, top_stocks)
-        
-    #     # Save enhanced results
-    #     timestamp = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
-    #     results_dir = f'results/{timestamp}'
-    #     Path(results_dir).mkdir(parents=True, exist_ok=True)
-        
-    #     # Save prediction results
-    #     prediction_results = {
-    #         'timestamp': timestamp,
-    #         'model_performance': {
-    #             name: {
-    #                 'train_score': results['train_score'],
-    #                 'test_score': results['test_score'],
-    #                 'feature_importance': results['feature_importance'].to_dict('records'),
-    #                 'classification_report': results['classification_report'],
-    #                 'confusion_matrix': results['confusion_matrix']
-    #             }
-    #             for name, results in model_results.items()
-    #         },
-    #         'top_stocks': top_stocks.to_dict('records')
-    #     }
-        
-    #     with open(f'{results_dir}/prediction_results.json', 'w') as f:
-    #         json.dump(prediction_results, f, cls=analyzer.db.CustomJSONEncoder)
-            
-    #     # Save enhanced top stocks DataFrame
-    #     top_stocks.to_csv(f'{results_dir}/top_stocks_with_predictions.csv', index=False)
-        
-    #     # Log model performance
-    #     logger.info("\nModel Performance Summary:")
-    #     for name, results in model_results.items():
-    #         logger.info(f"\n{name.upper()} Model:")
-    #         logger.info(f"Train Score: {results['train_score']:.4f}")
-    #         logger.info(f"Test Score: {results['test_score']:.4f}")
-    #         logger.info("\nTop 5 Important Features:")
-    #         logger.info(results['feature_importance'].head().to_string())
-              
-    #     # Log top predictions
-    #     logger.info("\nTop 5 Stocks by Ensemble Probability:")
-    #     top_predictions = top_stocks.nlargest(5, 'ensemble_up_probability')
-    #     for _, row in top_predictions.iterrows():
-    #         logger.info(
-    #             f"{row['ticker']}: {row['ensemble_up_probability']:.2%} probability of increase"
-    #         )
-    # else:
-    #     logger.warning("Insufficient data for model training")
-    #     # analyzer.save_results_to_storage(top_stocks)
         
     # Save results with quality metadata
     if os.getenv("SAVE_TO_STORAGE", "0") == "1":
         analyzer.save_results_to_storage(top_stocks)
         analyzer.db.save_sentiment_analysis(top_stocks)
-    analyzer.save_results(top_stocks)
+        analyzer.save_results(top_stocks)
 
     # Log summary
     logger.info("Processed %d unique tickers", len(combined_results))

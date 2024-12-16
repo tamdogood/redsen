@@ -307,6 +307,130 @@ class PolygonConnector:
             logger.error(f"Error calculating P/E ratio for {ticker}: {str(e)}")
             return None
 
+    def _parse_datapoint(self, datapoint) -> Dict:
+        """Helper function to parse DataPoint objects"""
+        try:
+            if datapoint is None:
+                return None
+                
+            # If it's already a dict, return relevant fields
+            if isinstance(datapoint, dict):
+                return {
+                    'value': datapoint.get('value'),
+                    'unit': datapoint.get('unit'),
+                    'label': datapoint.get('label')
+                }
+                
+            # If it's a named tuple or object, get attributes
+            return {
+                'value': getattr(datapoint, 'value', None),
+                'unit': getattr(datapoint, 'unit', None),
+                'label': getattr(datapoint, 'label', None)
+            }
+        except Exception as e:
+            logger.error(f"Error parsing datapoint: {str(e)}")
+            return None
+        
+    def parse_polygon_financials(self,financial_data) -> Dict:
+        """
+        Parse Polygon financial data response into a structured dictionary
+        
+        Args:
+            financial_data: Raw Polygon financial data response
+            
+        Returns:
+            Dictionary containing parsed financial data
+        """
+        try:
+            logger.debug(f"Financial data type: {type(financial_data)}")
+            logger.debug(f"Financial data attributes: {dir(financial_data)}")
+            
+            parsed = {
+                'metadata': {
+                    'cik': getattr(financial_data, 'cik', None),
+                    'company_name': getattr(financial_data, 'company_name', None),
+                    'start_date': getattr(financial_data, 'start_date', None),
+                    'end_date': getattr(financial_data, 'end_date', None),
+                    'filing_date': getattr(financial_data, 'filing_date', None),
+                    'fiscal_year': getattr(financial_data, 'fiscal_year', None),
+                    'fiscal_period': getattr(financial_data, 'fiscal_period', None),
+                    'source_filing_url': getattr(financial_data, 'source_filing_url', None),
+                    'source_filing_file_url': getattr(financial_data, 'source_filing_file_url', None)
+                },
+                'financials': {
+                    'balance_sheet': {},
+                    'income_statement': {},
+                    'cash_flow_statement': {},
+                    'comprehensive_income': {}
+                }
+            }
+            
+            # Get the financials object
+            financials = getattr(financial_data, 'financials', None)
+            if financials:
+                logger.debug(f"Financials type: {type(financials)}")
+                logger.debug(f"Financials attributes: {dir(financials)}")
+                
+                # Parse balance sheet
+                balance_sheet = getattr(financials, 'balance_sheet', {})
+                if balance_sheet:
+                    logger.debug(f"Balance sheet type: {type(balance_sheet)}")
+                    for key, value in balance_sheet.items():
+                        logger.debug(f"Processing balance sheet item: {key}, type: {type(value)}")
+                        parsed['financials']['balance_sheet'][key] = self._parse_datapoint(value)
+                
+                # Parse income statement
+                income_stmt = getattr(financials, 'income_statement', None)
+                if income_stmt:
+                    logger.debug(f"Income statement type: {type(income_stmt)}")
+                    logger.debug(f"Income statement attributes: {dir(income_stmt)}")
+                    income_dict = {}
+                    
+                    for field in ['basic_earnings_per_share', 'cost_of_revenue', 'gross_profit', 
+                            'operating_expenses', 'revenues']:
+                        value = getattr(income_stmt, field, None)
+                        if value is not None:
+                            logger.debug(f"Processing income statement item: {field}, type: {type(value)}")
+                            income_dict[field] = self._parse_datapoint(value)
+                    parsed['financials']['income_statement'] = income_dict
+                
+                # Parse cash flow statement
+                cash_flow = getattr(financials, 'cash_flow_statement', None)
+                if cash_flow:
+                    logger.debug(f"Cash flow type: {type(cash_flow)}")
+                    logger.debug(f"Cash flow attributes: {dir(cash_flow)}")
+                    cash_flow_dict = {}
+                    
+                    for field in ['exchange_gains_losses', 'net_cash_flow', 
+                            'net_cash_flow_from_financing_activities']:
+                        value = getattr(cash_flow, field, None)
+                        if value is not None:
+                            logger.debug(f"Processing cash flow item: {field}, type: {type(value)}")
+                            cash_flow_dict[field] = self._parse_datapoint(value)
+                    parsed['financials']['cash_flow_statement'] = cash_flow_dict
+                
+                # Parse comprehensive income
+                comp_income = getattr(financials, 'comprehensive_income', None)
+                if comp_income:
+                    logger.debug(f"Comprehensive income type: {type(comp_income)}")
+                    logger.debug(f"Comprehensive income attributes: {dir(comp_income)}")
+                    comp_income_dict = {}
+                    
+                    for field in ['comprehensive_income_loss', 
+                            'comprehensive_income_loss_attributable_to_parent',
+                            'other_comprehensive_income_loss']:
+                        value = getattr(comp_income, field, None)
+                        if value is not None:
+                            logger.debug(f"Processing comprehensive income item: {field}, type: {type(value)}")
+                            comp_income_dict[field] = self._parse_datapoint(value)
+                    parsed['financials']['comprehensive_income'] = comp_income_dict
+            
+            return parsed
+            
+        except Exception as e:
+            logger.error(f"Error parsing financial data: {str(e)}")
+            return parsed
+    
     @retry_with_backoff()
     def get_financial_ratios(self, ticker: str) -> Dict[str, Optional[float]]:
         """
@@ -319,97 +443,95 @@ class PolygonConnector:
             Dictionary of financial ratios
         """
         try:
-            ratios = {}
-            
-            # Get financials
-            financials = self.client.get_ticker_financials(
+            # Get financials and handle generator
+            financials_gen = self.client.vx.list_stock_financials(
                 ticker=ticker,
                 limit=1,
-                type='Y'
+                filing_date_gte="2024-01-01"
             )
             
-            if not financials or not financials[0]:
+            try:
+                latest = next(financials_gen)
+            except StopIteration:
+                logger.warning(f"No financial data found for {ticker}")
                 return {}
                 
-            latest = financials[0]
-            balance_sheet = latest.financials.get('balance_sheet', {})
-            income_statement = latest.financials.get('income_statement', {})
-            cash_flow = latest.financials.get('cash_flow_statement', {})
-            
-            # Calculate P/E Ratio
-            ratios['pe_ratio'] = self.get_pe_ratio(ticker)
-            
-            # Price to Book Ratio
-            total_assets = balance_sheet.get('total_assets', 0)
-            total_liabilities = balance_sheet.get('total_liabilities', 0)
-            book_value = total_assets - total_liabilities
-            
-            if book_value > 0:
-                market_cap = self.get_market_cap(ticker)
-                if market_cap:
-                    ratios['price_to_book'] = round(market_cap / book_value, 2)
-                    
-            # Debt to Equity
-            total_equity = balance_sheet.get('total_equity', 0)
-            if total_equity > 0:
-                ratios['debt_to_equity'] = round(total_liabilities / total_equity, 2)
+            if not latest:
+                return {}
                 
-            # Current Ratio
-            current_assets = balance_sheet.get('current_assets', 0)
-            current_liabilities = balance_sheet.get('current_liabilities', 0)
+            # Parse the polygon response into a clean dictionary
+            parsed = self.parse_polygon_financials(latest)
+            if not parsed:
+                return {}
+                
+            # Extract balance sheet items
+            balance_sheet = parsed.get('financials', {}).get('balance_sheet', {})
+            income_stmt = parsed.get('financials', {}).get('income_statement', {})
+            cash_flow = parsed.get('financials', {}).get('cash_flow_statement', {})
+            
+            # Helper function to safely get numeric values
+            def get_value(data_dict, key):
+                if not data_dict or key not in data_dict:
+                    return 0
+                return float(data_dict[key].get('value', 0) or 0)
+                
+            # Calculate key financial metrics
+            ratios = {}
+            
+            # Balance sheet metrics
+            total_assets = get_value(balance_sheet, 'assets')
+            total_liabilities = get_value(balance_sheet, 'liabilities')
+            current_assets = get_value(balance_sheet, 'current_assets')
+            current_liabilities = get_value(balance_sheet, 'current_liabilities')
+            equity = get_value(balance_sheet, 'equity')
+            inventory = get_value(balance_sheet, 'inventory')
+            
+            # Income statement metrics
+            revenue = get_value(income_stmt, 'revenues')
+            operating_expenses = get_value(income_stmt, 'operating_expenses')
+            eps = get_value(income_stmt, 'basic_earnings_per_share')
+            
+            # Cash flow metrics
+            operating_cash_flow = get_value(cash_flow, 'net_cash_flow')
+            financing_cash_flow = get_value(cash_flow, 'net_cash_flow_from_financing_activities')
+            
+            # Calculate ratios
+            if equity > 0:
+                ratios['debt_to_equity'] = round(total_liabilities / equity, 2)
+                ratios['roe'] = round(operating_expenses / equity, 4)  # Using operating_expenses as proxy for net income
+                
             if current_liabilities > 0:
                 ratios['current_ratio'] = round(current_assets / current_liabilities, 2)
+                # Quick ratio (acid-test)
+                ratios['quick_ratio'] = round((current_assets - inventory) / current_liabilities, 2)
                 
-            # Profit Margin
-            revenue = income_statement.get('revenues', 0)
-            net_income = income_statement.get('net_income_loss', 0)
             if revenue > 0:
-                ratios['profit_margin'] = round(net_income / revenue, 4)
+                ratios['operating_margin'] = round(operating_expenses / revenue, 4)
+                ratios['asset_turnover'] = round(revenue / total_assets, 4) if total_assets > 0 else None
                 
-            # Return on Equity (ROE)
-            if total_equity > 0:
-                ratios['roe'] = round(net_income / total_equity, 4)
-                
-            return ratios
+            if total_assets > 0:
+                ratios['roa'] = round(operating_expenses / total_assets, 4)
+                    
+            ratios.update({
+                'total_assets': total_assets,
+                'total_liabilities': total_liabilities,
+                'equity': equity,
+                'revenue': revenue,
+                'eps': eps,
+                'operating_cash_flow': operating_cash_flow,
+                'financing_cash_flow': financing_cash_flow
+            })
+            
+            ratios.update({
+                'fiscal_period': parsed['metadata']['fiscal_period'],
+                'fiscal_year': parsed['metadata']['fiscal_year'],
+                'filing_date': parsed['metadata']['filing_date']
+            })
+            
+            return {k: v for k, v in ratios.items() 
+                    if v is not None and not isinstance(v, (complex, bool)) 
+                    and (not isinstance(v, float) or (not np.isinf(v) and not np.isnan(v)))}
             
         except Exception as e:
             logger.error(f"Error calculating financial ratios for {ticker}: {str(e)}")
             return {}
-
-    @retry_with_backoff()
-    def get_market_cap(self, ticker: str) -> Optional[float]:
-        """
-        Get current market cap for a stock
-        
-        Args:
-            ticker: Stock symbol
-            
-        Returns:
-            Market cap if available, None otherwise
-        """
-        try:
-            # Get shares outstanding from company details
-            details = self.client.get_ticker_details(ticker)
-            if not details:
-                return None
-                
-            shares_outstanding = details.share_class_shares_outstanding
-            
-            # Get current price
-            latest_price = self.client.get_daily_open_close_agg(
-                ticker=ticker,
-                date=datetime.now().strftime('%Y-%m-%d')
-            )
-            
-            if not latest_price:
-                return None
-                
-            current_price = latest_price.close
-            
-            # Calculate market cap
-            market_cap = shares_outstanding * current_price
-            return market_cap
-            
-        except Exception as e:
-            logger.error(f"Error calculating market cap for {ticker}: {str(e)}")
-            return None

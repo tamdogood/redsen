@@ -258,13 +258,12 @@ class TechnicalAnalyzer:
     def get_stock_metrics(self, ticker: str) -> Optional[Dict]:
         """Get comprehensive stock metrics with improved data validation"""
         try:
-            stock_data = self.market_data.get_stock_data(ticker, days=180)
+            stock_data = self.market_data.get_stock_data(ticker, days=60)
             if not stock_data or stock_data['history'].empty:
                 logger.warning(f"No data available for {ticker}")
                 return None
                 
             hist = stock_data['history']
-            info = stock_data['info']
             
             # Validate minimum data requirements
             if len(hist) < 2:
@@ -292,22 +291,26 @@ class TechnicalAnalyzer:
             # Get market context
             market_metrics = self._get_market_context(ticker)
             
+            # fundamental_metrics = self._get_fundamental_metrics(ticker)
+            fundamental_metrics = self.market_data.get_financial_ratios(ticker)
+            
             # Update all available metrics
             metrics.update(price_metrics)
             metrics.update(volume_metrics)
             metrics.update(market_metrics)
+            metrics.update(fundamental_metrics)
             
             # Add fundamental metrics if available
-            fundamental_metrics = {
-                "market_cap": info.get("market_cap"),
-                "shares_outstanding": info.get("share_class_shares_outstanding"),
-                "sector": info.get("sector"),
-                "industry": info.get("industry"),
-                "description": info.get("description"),
-                "exchange": info.get("primary_exchange"),
-                "type": info.get("type")
-            }
-            metrics.update(fundamental_metrics)
+            # fundamental_metrics = {
+            #     "market_cap": info.get("market_cap"),
+            #     "shares_outstanding": info.get("share_class_shares_outstanding"),
+            #     "sector": info.get("sector"),
+            #     "industry": info.get("industry"),
+            #     "description": info.get("description"),
+            #     "exchange": info.get("primary_exchange"),
+            #     "type": info.get("type")
+            # }
+            # metrics.update(fundamental_metrics)
             return metrics
             
         except Exception as e:
@@ -396,7 +399,6 @@ class TechnicalAnalyzer:
                     metrics['atr'] = round(
                         (hist['High'] - hist['Low']).rolling(window=14).mean().iloc[-1], 4
                     )
-                    
             return metrics
             
         except Exception as e:
@@ -962,24 +964,126 @@ class TechnicalAnalyzer:
         return 100 - (100 / (1 + rs.iloc[-1]))
 
     def _get_fundamental_metrics(self, ticker: str) -> Dict:
-        """Get fundamental metrics for a stock"""
-        try:
-            # Get financial ratios from Polygon
-            ratios = self.market_data.get_financial_ratios(ticker)
-            
-            return {
-                "market_cap": self.market_data.get_market_cap(ticker),
-                "pe_ratio": ratios.get("pe_ratio"),
-                "price_to_book": ratios.get("price_to_book"),
-                "debt_to_equity": ratios.get("debt_to_equity"),
-                "current_ratio": ratios.get("current_ratio"),
-                "profit_margin": ratios.get("profit_margin"),
-                "roe": ratios.get("roe")
-            }
-        except Exception as e:
-            logger.warning(f"Error fetching fundamental metrics: {str(e)}")
-            return {}
+        """
+        Get fundamental metrics for a stock using Polygon Financials API
         
+        Args:
+            ticker: Stock symbol
+            
+        Returns:
+            Dictionary containing fundamental metrics
+        """
+        try:
+            # Get financials data using the correct endpoint
+            financials = self.market_data.client.vx.list_stock_financials(
+                ticker=ticker,
+                timeframe="quarterly",
+                include_sources=True,
+                order="desc",
+                limit=1
+            )
+            # print(financials)
+            if not financials:
+                logger.warning(f"No financial data available for {ticker}")
+                return {}
+                
+            # latest = financials.results[0]
+            
+            # Extract financial statement components
+            # income_stmt = latest.financials.income_statement
+            # balance_sheet = latest.financials.balance_sheet
+            # cash_flow = latest.financials.cash_flow_statement
+            
+            # # Calculate fundamental metrics
+            # metrics = {
+            #     # Profitability metrics
+            #     "gross_profit_margin": self._calculate_ratio(
+            #         getattr(income_stmt, 'gross_profit', None),
+            #         getattr(income_stmt, 'revenues', None)
+            #     ),
+            #     "operating_margin": self._calculate_ratio(
+            #         getattr(income_stmt, 'operating_income_loss', None),
+            #         getattr(income_stmt, 'revenues', None)
+            #     ),
+            #     "net_profit_margin": self._calculate_ratio(
+            #         getattr(income_stmt, 'net_income_loss', None),
+            #         getattr(income_stmt, 'revenues', None)
+            #     ),
+                
+            #     # Efficiency metrics
+            #     "asset_turnover": self._calculate_ratio(
+            #         getattr(income_stmt, 'revenues', None),
+            #         getattr(balance_sheet, 'total_assets', None)
+            #     ),
+            #     "inventory_turnover": self._calculate_ratio(
+            #         getattr(income_stmt, 'cost_of_revenue', None),
+            #         getattr(balance_sheet, 'inventory', None)
+            #     ),
+                
+            #     # Liquidity metrics
+            #     "current_ratio": self._calculate_ratio(
+            #         getattr(balance_sheet, 'current_assets', None),
+            #         getattr(balance_sheet, 'current_liabilities', None)
+            #     ),
+            #     "quick_ratio": self._calculate_ratio(
+            #         (getattr(balance_sheet, 'current_assets', 0) or 0) - 
+            #         (getattr(balance_sheet, 'inventory', 0) or 0),
+            #         getattr(balance_sheet, 'current_liabilities', None)
+            #     ),
+                
+            #     # Leverage metrics
+            #     "debt_to_equity": self._calculate_ratio(
+            #         getattr(balance_sheet, 'total_liabilities', None),
+            #         getattr(balance_sheet, 'total_shareholders_equity', None)
+            #     ),
+            #     "debt_to_assets": self._calculate_ratio(
+            #         getattr(balance_sheet, 'total_liabilities', None),
+            #         getattr(balance_sheet, 'total_assets', None)
+            #     ),
+                
+            #     # Cash flow metrics
+            #     "operating_cash_flow_ratio": self._calculate_ratio(
+            #         getattr(cash_flow, 'net_cash_flow_from_operating_activities', None),
+            #         getattr(balance_sheet, 'current_liabilities', None)
+            #     ),
+            #     "free_cash_flow": (
+            #         getattr(cash_flow, 'net_cash_flow_from_operating_activities', 0) or 0) - 
+            #         (getattr(cash_flow, 'capital_expenditure', 0) or 0),
+                
+            #     # Growth metrics
+            #     "revenue": getattr(income_stmt, 'revenues', None),
+            #     "net_income": getattr(income_stmt, 'net_income_loss', None),
+            #     "total_assets": getattr(balance_sheet, 'total_assets', None),
+            #     "total_liabilities": getattr(balance_sheet, 'total_liabilities', None),
+                
+            #     # Per share metrics
+            #     "book_value_per_share": self._calculate_ratio(
+            #         getattr(balance_sheet, 'total_shareholders_equity', None),
+            #         getattr(latest, 'shares_outstanding', None)
+            #     ),
+            #     "earnings_per_share": getattr(income_stmt, 'basic_earnings_per_share', None),
+                
+            #     # Working capital
+            #     "working_capital": (getattr(balance_sheet, 'current_assets', 0) or 0) - 
+            #                     (getattr(balance_sheet, 'current_liabilities', 0) or 0),
+                
+            #     # Filing info
+            #     "fiscal_period": latest.fiscal_period,
+            #     "fiscal_year": latest.fiscal_year,
+            #     "filing_date": latest.filing_date,
+            #     "start_date": latest.start_date,
+            #     "end_date": latest.end_date
+            # }
+            
+            # # Remove None values and convert to float where needed
+            # return {k: float(v) if isinstance(v, (int, float)) else v 
+            #         for k, v in metrics.items() 
+            #         if v is not None}
+            
+        except Exception as e:
+            logger.error(f"Error getting fundamental metrics for {ticker}: {str(e)}")
+            return {}
+
     def _calculate_price_gaps(self, hist: pd.DataFrame) -> Dict[str, Union[float, str]]:
         """Calculate and classify price gaps in the data"""
         try:
