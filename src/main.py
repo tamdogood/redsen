@@ -33,15 +33,15 @@ def main():
     )
 
     subreddits_to_analyze = [
-        # "wallstreetbets",
+        "wallstreetbets",
         "stocks",
-        # "investing",
-        # "stockmarket",
-        # "robinhood",
-        # "Superstonk",
-        # "ValueInvesting",
-        # "Wallstreetbetsnew",
-        # "stonks",
+        "investing",
+        "stockmarket",
+        "robinhood",
+        "Superstonk",
+        "ValueInvesting",
+        "Wallstreetbetsnew",
+        "stonks",
         # "XGramatikInsights",
         # "scottsstocks",
     ]
@@ -137,25 +137,95 @@ def main():
     }
 
     # Optional columns - only add if they exist
+    # Optional columns - only add if they exist
     optional_columns = {
-        # Sentiment Metrics
+        # Sentiment and Social Metrics
         "comment_sentiment_avg": "mean",
         "base_sentiment": "mean",
         "submission_sentiment": "mean",
         "bullish_comments_ratio": "mean",
         "bearish_comments_ratio": "mean",
-        # Price and Volume Metrics
+        "sentiment_confidence": "mean",
+        "upvote_ratio": "mean",
+        
+        # Price Metrics
         "current_price": "first",
         "price_change_1d": "first",
         "price_change_1w": "first",
+        "price_change_1m": "first",
+        "price_gaps": "first",
+        "price_trend": "first",
+        "support_resistance": "first",
+        
+        # Volume Metrics
         "volume_sma": "first",
         "volume_ratio": "first",
+        "avg_volume_10d": "first",
+        "avg_volume_30d": "first",
+        "volume_price_trend": "first",
+        "volume_momentum": "first",
+        "volume_trend": "first",
+        "relative_volume": "first",
+        
         # Technical Indicators
         "sma_20": "first",
+        "ema_9": "first",
         "rsi": "first",
+        "macd": "first",
+        "macd_line": "first",
+        "macd_signal": "first",
+        "macd_diff": "first",
+        "stochastic": "first",
+        "stoch_k": "first",
+        "stoch_d": "first",
+        "adx": "first",
+        "cci": "first",
+        "money_flow_index": "first",
+        
+        # Volatility Metrics
         "volatility": "first",
+        "volatility_daily": "first",
+        "volatility_weekly": "first",
+        "volatility_monthly": "first",
+        "volatility_trend": "first",
+        
+        # Bollinger Bands and Other Bands
+        "bollinger_upper": "first",
+        "bollinger_lower": "first",
+        "bb_upper": "first",
+        "bb_lower": "first",
+        "bb_middle": "first",
+        "keltner_channels": "first",
+        "atr": "first",
+        
+        # Market and Sector Metrics
+        "sector_performance": "first",
+        "market_indicators": "first",
+        "relative_strength": "first",
+        "beta": "first",
+        
         # Fundamental Metrics
-        "market_cap": "first"
+        "debt_to_equity": "first",
+        "roe": "first",
+        "current_ratio": "first",
+        "quick_ratio": "first",
+        "operating_margin": "first",
+        "asset_turnover": "first",
+        "roa": "first",
+        
+        # Financial Statement Data
+        "total_assets": "first",
+        "total_liabilities": "first",
+        "equity": "first",
+        "revenue": "first",
+        "eps": "first",
+        "operating_cash_flow": "first",
+        "financing_cash_flow": "first",
+        
+        # Filing Information
+        "fiscal_period": "first",
+        "fiscal_year": "first",
+        "filing_date": "first"
     }
 
     # Add optional columns only if they exist in the DataFrame
@@ -236,7 +306,8 @@ def main():
     if os.getenv("SAVE_TO_STORAGE", "0") == "1":
         analyzer.save_results_to_storage(top_stocks)
         analyzer.db.save_sentiment_analysis(top_stocks)
-        analyzer.save_results(top_stocks)
+    
+    analyzer.save_results(top_stocks)
 
     # Log summary
     logger.info("Processed %d unique tickers", len(combined_results))

@@ -52,6 +52,40 @@ class EnhancedStockAnalyzer:
         self.technical_analyzer = TechnicalAnalyzer(llm_connector=self.openai_client)
         
 
+    def dataframe_to_json(self, sentiment_data):
+        """
+        Convert DataFrame and other complex data types to JSON serializable format
+        
+        Args:
+            sentiment_data: Dictionary containing DataFrames and other data
+            
+        Returns:
+            JSON serializable dictionary
+        """
+        def convert_value(val):
+            if isinstance(val, pd.DataFrame):
+                return val.to_dict(orient='records')
+            elif isinstance(val, pd.Series):
+                return val.to_dict()
+            elif isinstance(val, np.integer):
+                return int(val)
+            elif isinstance(val, np.floating):
+                return float(val)
+            elif isinstance(val, np.ndarray):
+                return val.tolist()
+            elif isinstance(val, dt.datetime):
+                return val.isoformat()
+            elif isinstance(val, (set, tuple)):
+                return list(val)
+            return val
+
+        if isinstance(sentiment_data, dict):
+            return {key: convert_value(value) for key, value in sentiment_data.items()}
+        elif isinstance(sentiment_data, pd.DataFrame):
+            return sentiment_data.to_dict(orient='records')
+        else:
+            return convert_value(sentiment_data)
+    
     def analyze_subreddit_sentiment(
         self, subreddit_name: str, time_filter: str = "day", limit: int = 2
     ) -> pd.DataFrame:
@@ -102,10 +136,13 @@ class EnhancedStockAnalyzer:
             sentiment_data = sentiment_data[
                 sentiment_data["ticker"].isin(valid_tickers)
             ]
-
+            
+        # serializable_data = self.dataframe_to_json(sentiment_data)
+        # print(json.dumps(serializable_data, indent=2))
+        print(sentiment_data.to_string())
         # Save posts by ticker
-        # if os.getenv("SAVE_TO_STORAGE", "0") == "1":
-            # self.save_posts_by_ticker(sentiment_data, subreddit_name)
+        if os.getenv("SAVE_TO_STORAGE", "0") == "1":
+            self.save_posts_by_ticker(sentiment_data, subreddit_name)
 
         return sentiment_data
 
