@@ -184,7 +184,7 @@ def calculate_composite_scores(combined_results: pd.DataFrame) -> pd.DataFrame:
 @task
 def save_results(analyzer, top_stocks: pd.DataFrame):
     """Save analysis results to storage and database"""
-    analyzer.save_results_to_storage(top_stocks)
+    # analyzer.save_results_to_storage(top_stocks)
     analyzer.save_results(top_stocks)
     analyzer.db.save_sentiment_analysis(top_stocks)
 

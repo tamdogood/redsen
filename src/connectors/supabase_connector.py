@@ -57,7 +57,7 @@ class SupabaseConnector:
             analysis_records = []
             for _, record in sentiment_data.iterrows():
                 analysis_record = {
-                    # Timestamps
+                    # Primary and timestamp fields
                     "analysis_timestamp": self._convert_to_json_serializable(
                         record["analysis_timestamp"]
                     ),
@@ -67,14 +67,12 @@ class SupabaseConnector:
                     "data_end_date": self._convert_to_json_serializable(
                         record["data_end_date"]
                     ),
-                    # Basic info
                     "ticker": str(record["ticker"]),
-                    # Reddit metrics
+                    # Reddit and sentiment metrics
                     "score": self._convert_to_json_serializable(record.get("score")),
                     "num_comments": self._convert_to_json_serializable(
                         record.get("num_comments")
                     ),
-                    # Sentiment metrics
                     "comment_sentiment_avg": self._convert_to_json_serializable(
                         record.get("comment_sentiment_avg")
                     ),
@@ -93,6 +91,12 @@ class SupabaseConnector:
                     "sentiment_confidence": self._convert_to_json_serializable(
                         record.get("sentiment_confidence")
                     ),
+                    "upvote_ratio": self._convert_to_json_serializable(
+                        record.get("upvote_ratio")
+                    ),
+                    "post_id": self._convert_to_json_serializable(
+                        record.get("post_id")
+                    ),
                     # Price metrics
                     "current_price": self._convert_to_json_serializable(
                         record.get("current_price")
@@ -103,18 +107,42 @@ class SupabaseConnector:
                     "price_change_1d": self._convert_to_json_serializable(
                         record.get("price_change_1d")
                     ),
-                    # Volume metrics
-                    "avg_volume": self._convert_to_json_serializable(
-                        record.get("avg_volume")
+                    "price_change_1m": self._convert_to_json_serializable(
+                        record.get("price_change_1m")
                     ),
-                    "volume_change": self._convert_to_json_serializable(
-                        record.get("volume_change")
+                    "price_gaps": self._convert_to_json_serializable(
+                        record.get("price_gaps")
+                    ),
+                    "price_trend": self._convert_to_json_serializable(
+                        record.get("price_trend")
+                    ),
+                    "support_resistance": self._convert_to_json_serializable(
+                        record.get("support_resistance")
+                    ),
+                    # Volume metrics
+                    "avg_volume_10d": self._convert_to_json_serializable(
+                        record.get("avg_volume_10d")
+                    ),
+                    "avg_volume_30d": self._convert_to_json_serializable(
+                        record.get("avg_volume_30d")
                     ),
                     "volume_sma": self._convert_to_json_serializable(
                         record.get("volume_sma")
                     ),
                     "volume_ratio": self._convert_to_json_serializable(
                         record.get("volume_ratio")
+                    ),
+                    "volume_price_trend": self._convert_to_json_serializable(
+                        record.get("volume_price_trend")
+                    ),
+                    "volume_momentum": self._convert_to_json_serializable(
+                        record.get("volume_momentum")
+                    ),
+                    "volume_trend": self._convert_to_json_serializable(
+                        record.get("volume_trend")
+                    ),
+                    "avg_volume": self._convert_to_json_serializable(
+                        record.get("avg_volume")
                     ),
                     # Technical indicators
                     "sma_20": self._convert_to_json_serializable(record.get("sma_20")),
@@ -129,20 +157,68 @@ class SupabaseConnector:
                     "bollinger_lower": self._convert_to_json_serializable(
                         record.get("bollinger_lower")
                     ),
-                    "macd_line": self._convert_to_json_serializable(
-                        record.get("macd_line")
+                    "bb_upper": self._convert_to_json_serializable(
+                        record.get("bb_upper")
                     ),
-                    "signal_line": self._convert_to_json_serializable(
-                        record.get("signal_line")
+                    "bb_lower": self._convert_to_json_serializable(
+                        record.get("bb_lower")
+                    ),
+                    "bb_middle": self._convert_to_json_serializable(
+                        record.get("bb_middle")
+                    ),
+                    "macd": self._convert_to_json_serializable(record.get("macd")),
+                    "macd_signal": self._convert_to_json_serializable(
+                        record.get("macd_signal")
                     ),
                     "macd_histogram": self._convert_to_json_serializable(
                         record.get("macd_histogram")
+                    ),
+                    "macd_diff": self._convert_to_json_serializable(
+                        record.get("macd_diff")
                     ),
                     "stoch_k": self._convert_to_json_serializable(
                         record.get("stoch_k")
                     ),
                     "stoch_d": self._convert_to_json_serializable(
                         record.get("stoch_d")
+                    ),
+                    "stochastic": self._convert_to_json_serializable(
+                        record.get("stochastic")
+                    ),
+                    "adx": self._convert_to_json_serializable(record.get("adx")),
+                    "cci": self._convert_to_json_serializable(record.get("cci")),
+                    "money_flow_index": self._convert_to_json_serializable(
+                        record.get("money_flow_index")
+                    ),
+                    "keltner_channels": self._convert_to_json_serializable(
+                        record.get("keltner_channels")
+                    ),
+                    "atr": self._convert_to_json_serializable(record.get("atr")),
+                    # Volatility metrics
+                    "volatility_daily": self._convert_to_json_serializable(
+                        record.get("volatility_daily")
+                    ),
+                    "volatility_weekly": self._convert_to_json_serializable(
+                        record.get("volatility_weekly")
+                    ),
+                    "volatility_monthly": self._convert_to_json_serializable(
+                        record.get("volatility_monthly")
+                    ),
+                    "volatility_trend": self._convert_to_json_serializable(
+                        record.get("volatility_trend")
+                    ),
+                    # Market and sector metrics
+                    "sector_performance": self._convert_to_json_serializable(
+                        record.get("sector_performance")
+                    ),
+                    "market_indicators": self._convert_to_json_serializable(
+                        record.get("market_indicators")
+                    ),
+                    "relative_strength": self._convert_to_json_serializable(
+                        record.get("relative_strength")
+                    ),
+                    "market_correlation": self._convert_to_json_serializable(
+                        record.get("market_correlation")
                     ),
                     # Fundamental metrics
                     "market_cap": self._convert_to_json_serializable(
@@ -161,7 +237,42 @@ class SupabaseConnector:
                     "revenue_growth": self._convert_to_json_serializable(
                         record.get("revenue_growth")
                     ),
-                    # Market metrics
+                    "debt_to_equity": self._convert_to_json_serializable(
+                        record.get("debt_to_equity")
+                    ),
+                    "roe": self._convert_to_json_serializable(record.get("roe")),
+                    "current_ratio": self._convert_to_json_serializable(
+                        record.get("current_ratio")
+                    ),
+                    "quick_ratio": self._convert_to_json_serializable(
+                        record.get("quick_ratio")
+                    ),
+                    "operating_margin": self._convert_to_json_serializable(
+                        record.get("operating_margin")
+                    ),
+                    "asset_turnover": self._convert_to_json_serializable(
+                        record.get("asset_turnover")
+                    ),
+                    "roa": self._convert_to_json_serializable(record.get("roa")),
+                    # Financial metrics
+                    "total_assets": self._convert_to_json_serializable(
+                        record.get("total_assets")
+                    ),
+                    "total_liabilities": self._convert_to_json_serializable(
+                        record.get("total_liabilities")
+                    ),
+                    "equity": self._convert_to_json_serializable(record.get("equity")),
+                    "revenue": self._convert_to_json_serializable(
+                        record.get("revenue")
+                    ),
+                    "eps": self._convert_to_json_serializable(record.get("eps")),
+                    "operating_cash_flow": self._convert_to_json_serializable(
+                        record.get("operating_cash_flow")
+                    ),
+                    "financing_cash_flow": self._convert_to_json_serializable(
+                        record.get("financing_cash_flow")
+                    ),
+                    # Market analysis
                     "target_price": self._convert_to_json_serializable(
                         record.get("target_price")
                     ),
@@ -187,6 +298,20 @@ class SupabaseConnector:
                     ),
                     "fundamental_score": self._convert_to_json_serializable(
                         record.get("fundamental_score")
+                    ),
+                    # Filing information
+                    "fiscal_period": self._convert_to_json_serializable(
+                        record.get("fiscal_period")
+                    ),
+                    "fiscal_year": self._convert_to_json_serializable(
+                        record.get("fiscal_year")
+                    ),
+                    "filing_date": self._convert_to_json_serializable(
+                        record.get("filing_date")
+                    ),
+                    # Data quality
+                    "data_quality_score": self._convert_to_json_serializable(
+                        record.get("data_quality_score")
                     ),
                 }
                 analysis_records.append(analysis_record)

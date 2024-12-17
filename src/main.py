@@ -38,8 +38,6 @@ def main():
         "ValueInvesting",
         "Wallstreetbetsnew",
         "stonks",
-        # "XGramatikInsights",
-        # "scottsstocks",
     ]
     final_results = []
 
@@ -282,7 +280,7 @@ def main():
     # Calculate composite score only with available components
     combined_results["composite_score"] = sum(score_components)
 
-    top_stocks = combined_results.nlargest(50, "composite_score")
+    top_stocks = combined_results.nlargest(150, "composite_score")
 
     # Update fill values dictionary only with available columns
     fill_values = {}
@@ -314,7 +312,7 @@ def main():
 
     # Save results with quality metadata
     if os.getenv("SAVE_TO_STORAGE", "0") == "1":
-        analyzer.save_results_to_storage(top_stocks)
+        # analyzer.save_results_to_storage(top_stocks)
         analyzer.db.save_sentiment_analysis(top_stocks)
 
     analyzer.save_results(top_stocks)
