@@ -10,7 +10,9 @@ def hello_world(name: str = "world", goodbye: bool = False):
 
 
 if __name__ == "__main__":
-    hello_world.serve(name="my-first-deployment",
-                      tags=["onboarding"],
-                      parameters={"goodbye": True},
-                      interval=60)
+    hello_world.serve(
+        name="my-first-deployment",
+        tags=["onboarding"],
+        parameters={"goodbye": True},
+        interval=60,
+    )

@@ -30,7 +30,7 @@ class SupabaseConnector:
     def __init__(self, supabase_url: str, supabase_key: str):
         """Initialize Supabase connection"""
         self.supabase: Client = create_client(supabase_url, supabase_key)
-        self.write_controller = os.getenv("DB_WRITE", False)
+        self.write_controller = os.getenv("DB_WRITE", "0")
 
     def _convert_to_json_serializable(self, obj: any) -> any:
         """Convert values to JSON serializable format"""
@@ -48,7 +48,7 @@ class SupabaseConnector:
 
     def save_sentiment_analysis(self, sentiment_data: pd.DataFrame) -> Dict:
         """Save enhanced sentiment analysis results to Supabase"""
-        if self.write_controller == "False":
+        if self.write_controller != "1":
             return {"success": False, "error": "Write controller is disabled"}
         try:
             if sentiment_data.empty:
@@ -223,7 +223,7 @@ class SupabaseConnector:
 
     def save_post_data(self, post_data: Dict) -> Dict:
         """Save post data to Supabase tables with improved error handling"""
-        if self.write_controller == "False":
+        if self.write_controller != "1":
             return {"success": False, "error": "Write controller is disabled"}
         try:
             # Validate required fields
@@ -444,22 +444,24 @@ class SupabaseConnector:
         except Exception as e:
             logger.error(f"Error retrieving sentiment trends for {ticker}: {str(e)}")
             return pd.DataFrame()
-        
-    def get_recent_posts_by_ticker(self, ticker: str, days: int = 7, include_comments: bool = False) -> List[Dict]:
+
+    def get_recent_posts_by_ticker(
+        self, ticker: str, days: int = 7, include_comments: bool = False
+    ) -> List[Dict]:
         """
         Get recent posts for a specific ticker
-        
+
         Args:
             ticker: Stock symbol
             days: Number of days to look back
             include_comments: Whether to include post comments
-            
+
         Returns:
             List of post dictionaries
         """
         try:
             cutoff_date = (dt.datetime.now() - dt.timedelta(days=days)).isoformat()
-            
+
             # First get the posts that mention this ticker
             posts_query = (
                 self.db.supabase.table("post_tickers")
@@ -470,45 +472,47 @@ class SupabaseConnector:
                 .limit(100)
                 .execute()
             )
-            
+
             if not posts_query.data:
                 return []
-                
+
             posts = []
             for post_ticker in posts_query.data:
-                if not post_ticker.get('reddit_posts'):
+                if not post_ticker.get("reddit_posts"):
                     continue
-                    
+
                 post_data = {
-                    **post_ticker['reddit_posts'],
+                    **post_ticker["reddit_posts"],
                     "ticker_mention": {
-                        "ticker": post_ticker['ticker'],
-                        "mentioned_at": post_ticker['mentioned_at']
-                    }
+                        "ticker": post_ticker["ticker"],
+                        "mentioned_at": post_ticker["mentioned_at"],
+                    },
                 }
-                
+
                 # If comments are requested, get them separately
                 if include_comments:
                     try:
                         comments_query = (
                             self.db.supabase.table("post_comments")
                             .select("*")
-                            .eq("post_id", post_ticker['reddit_posts']['post_id'])
+                            .eq("post_id", post_ticker["reddit_posts"]["post_id"])
                             .execute()
                         )
                         post_data["comments"] = comments_query.data
                     except Exception as e:
-                        logger.error(f"Error fetching comments for post {post_ticker['reddit_posts']['post_id']}: {str(e)}")
+                        logger.error(
+                            f"Error fetching comments for post {post_ticker['reddit_posts']['post_id']}: {str(e)}"
+                        )
                         post_data["comments"] = []
-                
+
                 posts.append(post_data)
-                
+
             return posts
-            
+
         except Exception as e:
             logger.error(f"Error retrieving posts for {ticker}: {str(e)}")
             return []
-    
+
     def get_post_comments(self, post_id: str) -> List[Dict]:
         """Get all comments for a specific post"""
         try:
@@ -676,7 +680,7 @@ class SupabaseConnector:
         Returns:
             Dict with operation status
         """
-        if self.write_controller == "False":
+        if self.write_controller != "1":
             return {"success": False, "error": "Write controller is disabled"}
         try:
             content = file_data.get("content")
@@ -722,7 +726,7 @@ class SupabaseConnector:
         Returns:
             Dict with operation results
         """
-        if self.write_controller == "False":
+        if self.write_controller != "1":
             return {"success": False, "error": "Write controller is disabled"}
         if df.empty:
             return {"success": False, "error": "Empty DataFrame provided"}

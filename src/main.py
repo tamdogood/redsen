@@ -6,22 +6,18 @@ import os
 import yfinance as yf
 from dotenv import load_dotenv
 from scipy import stats
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier
-from sklearn.metrics import classification_report, confusion_matrix
-from sklearn.preprocessing import StandardScaler
-import joblib
-import json
-from pathlib import Path
 
 from analyzers.sentiment_analyzer import EnhancedStockAnalyzer
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
+
 
 def main():
     analyzer = EnhancedStockAnalyzer(
@@ -77,6 +73,7 @@ def main():
 
         # Add market context with proper scalar conversion
         try:
+
             def calculate_correlation(ticker):
                 if pd.isna(ticker):
                     return 0.0
@@ -97,8 +94,13 @@ def main():
                         return 0.0
 
                     # Check for constant arrays
-                    if len(np.unique(market_returns[-min_len:])) == 1 or len(np.unique(stock_returns[-min_len:])) == 1:
-                        logger.warning(f"Constant returns detected for {ticker} - correlation undefined")
+                    if (
+                        len(np.unique(market_returns[-min_len:])) == 1
+                        or len(np.unique(stock_returns[-min_len:])) == 1
+                    ):
+                        logger.warning(
+                            f"Constant returns detected for {ticker} - correlation undefined"
+                        )
                         return 0.0
 
                     # Calculate correlation and extract the scalar value
@@ -112,13 +114,17 @@ def main():
                     )
 
                 except Exception as e:
-                    logger.warning(f"Error calculating correlation for {ticker}: {str(e)}")
+                    logger.warning(
+                        f"Error calculating correlation for {ticker}: {str(e)}"
+                    )
                     return 0.0
-            
+
             df["market_correlation"] = df["ticker"].apply(calculate_correlation)
 
         except Exception as e:
-            logger.warning(f"Warning: Could not calculate market correlations: {str(e)}")
+            logger.warning(
+                f"Warning: Could not calculate market correlations: {str(e)}"
+            )
             df["market_correlation"] = 0.0
 
     # First, verify which columns exist in the DataFrames
@@ -133,7 +139,7 @@ def main():
         "market_correlation": "first",
         "analysis_timestamp": "first",
         "data_start_date": "first",
-        "data_end_date": "first"
+        "data_end_date": "first",
     }
 
     # Optional columns - only add if they exist
@@ -147,7 +153,6 @@ def main():
         "bearish_comments_ratio": "mean",
         "sentiment_confidence": "mean",
         "upvote_ratio": "mean",
-        
         # Price Metrics
         "current_price": "first",
         "price_change_1d": "first",
@@ -156,7 +161,6 @@ def main():
         "price_gaps": "first",
         "price_trend": "first",
         "support_resistance": "first",
-        
         # Volume Metrics
         "volume_sma": "first",
         "volume_ratio": "first",
@@ -166,7 +170,6 @@ def main():
         "volume_momentum": "first",
         "volume_trend": "first",
         "relative_volume": "first",
-        
         # Technical Indicators
         "sma_20": "first",
         "ema_9": "first",
@@ -181,14 +184,12 @@ def main():
         "adx": "first",
         "cci": "first",
         "money_flow_index": "first",
-        
         # Volatility Metrics
         "volatility": "first",
         "volatility_daily": "first",
         "volatility_weekly": "first",
         "volatility_monthly": "first",
         "volatility_trend": "first",
-        
         # Bollinger Bands and Other Bands
         "bollinger_upper": "first",
         "bollinger_lower": "first",
@@ -197,13 +198,11 @@ def main():
         "bb_middle": "first",
         "keltner_channels": "first",
         "atr": "first",
-        
         # Market and Sector Metrics
         "sector_performance": "first",
         "market_indicators": "first",
         "relative_strength": "first",
         "beta": "first",
-        
         # Fundamental Metrics
         "debt_to_equity": "first",
         "roe": "first",
@@ -212,7 +211,6 @@ def main():
         "operating_margin": "first",
         "asset_turnover": "first",
         "roa": "first",
-        
         # Financial Statement Data
         "total_assets": "first",
         "total_liabilities": "first",
@@ -221,11 +219,10 @@ def main():
         "eps": "first",
         "operating_cash_flow": "first",
         "financing_cash_flow": "first",
-        
         # Filing Information
         "fiscal_period": "first",
         "fiscal_year": "first",
-        "filing_date": "first"
+        "filing_date": "first",
     }
 
     # Add optional columns only if they exist in the DataFrame
@@ -235,9 +232,7 @@ def main():
 
     # Combine and aggregate results with available metrics
     combined_results = (
-        pd.concat(final_results)
-        .groupby("ticker")
-        .agg(agg_dict)
+        pd.concat(final_results).groupby("ticker").agg(agg_dict)
     )  # Remove reset_index() here as ticker is already the index
 
     # Reset index only if ticker is not already a column
@@ -246,32 +241,43 @@ def main():
 
     # Update composite score calculation with only available columns
     score_components = []
-    
+
     # Social and Sentiment Components (40%)
     if "num_comments" in combined_results.columns:
         score_components.append(combined_results["num_comments"].rank(pct=True) * 0.15)
     if "comment_sentiment_avg" in combined_results.columns:
-        score_components.append(combined_results["comment_sentiment_avg"].rank(pct=True) * 0.15)
+        score_components.append(
+            combined_results["comment_sentiment_avg"].rank(pct=True) * 0.15
+        )
     if "bullish_comments_ratio" in combined_results.columns:
-        score_components.append(combined_results["bullish_comments_ratio"].rank(pct=True) * 0.10)
-    
+        score_components.append(
+            combined_results["bullish_comments_ratio"].rank(pct=True) * 0.10
+        )
+
     # Technical Components (40%)
     if "volume_ratio" in combined_results.columns:
         score_components.append(combined_results["volume_ratio"].rank(pct=True) * 0.15)
     if "price_change_1d" in combined_results.columns:
-        score_components.append(combined_results["price_change_1d"].rank(pct=True) * 0.10)
+        score_components.append(
+            combined_results["price_change_1d"].rank(pct=True) * 0.10
+        )
     if "price_change_1w" in combined_results.columns:
-        score_components.append(combined_results["price_change_1w"].rank(pct=True) * 0.15)
+        score_components.append(
+            combined_results["price_change_1w"].rank(pct=True) * 0.15
+        )
     if "rsi" in combined_results.columns:
         score_components.append(
             combined_results["rsi"]
             .apply(lambda x: 1 - abs(50 - x) / 50 if pd.notnull(x) else 0)
-            .rank(pct=True) * 0.10
+            .rank(pct=True)
+            * 0.10
         )
-    
+
     # Market Context (10%)
     if "market_correlation" in combined_results.columns:
-        score_components.append(combined_results["market_correlation"].rank(pct=True) * 0.10)
+        score_components.append(
+            combined_results["market_correlation"].rank(pct=True) * 0.10
+        )
 
     # Calculate composite score only with available components
     combined_results["composite_score"] = sum(score_components)
@@ -283,8 +289,13 @@ def main():
     for col in combined_results.columns:
         if col in ["score", "num_comments"]:
             fill_values[col] = 0
-        elif col in ["comment_sentiment_avg", "base_sentiment", "submission_sentiment", 
-                    "bullish_comments_ratio", "bearish_comments_ratio"]:
+        elif col in [
+            "comment_sentiment_avg",
+            "base_sentiment",
+            "submission_sentiment",
+            "bullish_comments_ratio",
+            "bearish_comments_ratio",
+        ]:
             fill_values[col] = 0
         elif col == "rsi":
             fill_values[col] = 50
@@ -299,23 +310,22 @@ def main():
         lambda row: sum(pd.notnull(row)) / len(row), axis=1
     )
 
-    logger.info("Preparing data for model training...")
-    
-        
+    # logger.info("Preparing data for model training...")
+
     # Save results with quality metadata
     if os.getenv("SAVE_TO_STORAGE", "0") == "1":
         analyzer.save_results_to_storage(top_stocks)
         analyzer.db.save_sentiment_analysis(top_stocks)
-    
+
     analyzer.save_results(top_stocks)
 
     # Log summary
     logger.info("Processed %d unique tickers", len(combined_results))
-    logger.info("Top ticker by sentiment: %s", top_stocks.iloc[0]['ticker'])
+    logger.info("Top ticker by sentiment: %s", top_stocks.iloc[0]["ticker"])
     logger.info(
-        "Top ticker composite score: %.2f",
-        top_stocks.iloc[0]['composite_score']
+        "Top ticker composite score: %.2f", top_stocks.iloc[0]["composite_score"]
     )
+
 
 if __name__ == "__main__":
     main()

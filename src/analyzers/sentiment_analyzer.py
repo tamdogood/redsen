@@ -34,15 +34,13 @@ class EnhancedStockAnalyzer:
     ):
         """Initialize the analyzer with API credentials"""
         self.reddit = praw.Reddit(
-            client_id=client_id,
-            client_secret=client_secret,
-            user_agent=user_agent
+            client_id=client_id, client_secret=client_secret, user_agent=user_agent
         )
 
         self.db = SupabaseConnector(
             supabase_url=supabase_url, supabase_key=supabase_key
         )
-        
+
         # Initialize OpenAI client (do this in __init__ if used frequently)
         self.openai_client = OpenAI(
             api_key=os.getenv("OPENAI_API_KEY", ""),
@@ -50,21 +48,21 @@ class EnhancedStockAnalyzer:
 
         self.sia = SentimentIntensityAnalyzer()
         self.technical_analyzer = TechnicalAnalyzer(llm_connector=self.openai_client)
-        
 
     def dataframe_to_json(self, sentiment_data):
         """
         Convert DataFrame and other complex data types to JSON serializable format
-        
+
         Args:
             sentiment_data: Dictionary containing DataFrames and other data
-            
+
         Returns:
             JSON serializable dictionary
         """
+
         def convert_value(val):
             if isinstance(val, pd.DataFrame):
-                return val.to_dict(orient='records')
+                return val.to_dict(orient="records")
             elif isinstance(val, pd.Series):
                 return val.to_dict()
             elif isinstance(val, np.integer):
@@ -82,10 +80,10 @@ class EnhancedStockAnalyzer:
         if isinstance(sentiment_data, dict):
             return {key: convert_value(value) for key, value in sentiment_data.items()}
         elif isinstance(sentiment_data, pd.DataFrame):
-            return sentiment_data.to_dict(orient='records')
+            return sentiment_data.to_dict(orient="records")
         else:
             return convert_value(sentiment_data)
-    
+
     def analyze_subreddit_sentiment(
         self, subreddit_name: str, time_filter: str = "day", limit: int = 2
     ) -> pd.DataFrame:
@@ -113,7 +111,9 @@ class EnhancedStockAnalyzer:
         # Add stock metrics in parallel
         with ThreadPoolExecutor(max_workers=10) as executor:
             future_to_ticker = {
-                executor.submit(self.technical_analyzer.get_stock_metrics, row["ticker"]): row["ticker"]
+                executor.submit(
+                    self.technical_analyzer.get_stock_metrics, row["ticker"]
+                ): row["ticker"]
                 for _, row in sentiment_data.iterrows()
             }
 
@@ -136,13 +136,12 @@ class EnhancedStockAnalyzer:
             sentiment_data = sentiment_data[
                 sentiment_data["ticker"].isin(valid_tickers)
             ]
-            
+
         # serializable_data = self.dataframe_to_json(sentiment_data)
         # print(json.dumps(serializable_data, indent=2))
-        print(sentiment_data.to_string())
         # Save posts by ticker
-        if os.getenv("SAVE_TO_STORAGE", "0") == "1":
-            self.save_posts_by_ticker(sentiment_data, subreddit_name)
+        # if os.getenv("SAVE_TO_STORAGE", "0") == "1":
+        # self.db.save_posts_by_ticker(sentiment_data, subreddit_name)
 
         return sentiment_data
 
@@ -833,10 +832,10 @@ class EnhancedStockAnalyzer:
         Returns:
             Dict: Operation status and results
         """
-        if os.getenv("DB_WRITE", False) != "true":
-            logger.warning("DB_WRITE environment variable not set to 'true'")
+        if os.getenv("DB_WRITE", "0") != "1":
+            logger.warning("DB_WRITE environment variable not set to '1'")
             return {"success": False, "error": "DB_WRITE not enabled"}
-        
+
         if df.empty:
             logger.warning("No results to save")
             return {"success": False, "error": "Empty DataFrame provided"}
@@ -1033,66 +1032,94 @@ class EnhancedStockAnalyzer:
     def _analyze_sentiment_metrics(self, ticker: str) -> Dict:
         """
         Calculate sentiment metrics for a ticker
-        
+
         Args:
             ticker: Stock symbol
-            
+
         Returns:
             Dictionary of sentiment metrics
         """
         try:
             metrics = {}
-            
+
             # Get sentiment trends
             sentiment_data = self.db.get_sentiment_trends(
-                ticker=ticker,
-                days=30,
-                include_technicals=True
+                ticker=ticker, days=30, include_technicals=True
             )
-            
+
             if not sentiment_data.empty:
                 # Calculate basic sentiment metrics
-                sentiment_avg = pd.to_numeric(sentiment_data['comment_sentiment_avg'], errors='coerce')
-                
-                metrics.update({
-                    'sentiment_score': float(sentiment_avg.mean()) if not sentiment_avg.isna().all() else 0,
-                    'sentiment_std': float(sentiment_avg.std()) if not sentiment_avg.isna().all() else 0,
-                    'sentiment_momentum': float(sentiment_avg.diff().mean()) if len(sentiment_avg) > 1 else 0,
-                    'sentiment_volatility': float(sentiment_avg.pct_change().std() * np.sqrt(252)) if len(sentiment_avg) > 1 else 0
-                })
-                
+                sentiment_avg = pd.to_numeric(
+                    sentiment_data["comment_sentiment_avg"], errors="coerce"
+                )
+
+                metrics.update(
+                    {
+                        "sentiment_score": float(sentiment_avg.mean())
+                        if not sentiment_avg.isna().all()
+                        else 0,
+                        "sentiment_std": float(sentiment_avg.std())
+                        if not sentiment_avg.isna().all()
+                        else 0,
+                        "sentiment_momentum": float(sentiment_avg.diff().mean())
+                        if len(sentiment_avg) > 1
+                        else 0,
+                        "sentiment_volatility": float(
+                            sentiment_avg.pct_change().std() * np.sqrt(252)
+                        )
+                        if len(sentiment_avg) > 1
+                        else 0,
+                    }
+                )
+
                 # Calculate bullish/bearish ratios if available
-                if 'bullish_comments_ratio' in sentiment_data.columns:
-                    bullish_ratio = pd.to_numeric(sentiment_data['bullish_comments_ratio'], errors='coerce')
-                    metrics['avg_bullish_ratio'] = float(bullish_ratio.mean()) if not bullish_ratio.isna().all() else 0.5
-                    
-                if 'bearish_comments_ratio' in sentiment_data.columns:
-                    bearish_ratio = pd.to_numeric(sentiment_data['bearish_comments_ratio'], errors='coerce')
-                    metrics['avg_bearish_ratio'] = float(bearish_ratio.mean()) if not bearish_ratio.isna().all() else 0.5
-            
+                if "bullish_comments_ratio" in sentiment_data.columns:
+                    bullish_ratio = pd.to_numeric(
+                        sentiment_data["bullish_comments_ratio"], errors="coerce"
+                    )
+                    metrics["avg_bullish_ratio"] = (
+                        float(bullish_ratio.mean())
+                        if not bullish_ratio.isna().all()
+                        else 0.5
+                    )
+
+                if "bearish_comments_ratio" in sentiment_data.columns:
+                    bearish_ratio = pd.to_numeric(
+                        sentiment_data["bearish_comments_ratio"], errors="coerce"
+                    )
+                    metrics["avg_bearish_ratio"] = (
+                        float(bearish_ratio.mean())
+                        if not bearish_ratio.isna().all()
+                        else 0.5
+                    )
+
             # Get recent posts
-            recent_posts = self.db.get_recent_posts_by_ticker(ticker, days=7, include_comments=True)
-            
+            recent_posts = self.db.get_recent_posts_by_ticker(
+                ticker, days=7, include_comments=True
+            )
+
             if recent_posts:
                 recent_sentiments = []
                 recent_bull_ratio = []
                 recent_bear_ratio = []
-                
+
                 for post in recent_posts:
                     # Add post sentiment if available
-                    if 'sentiment' in post and isinstance(post['sentiment'], dict):
-                        sentiment_value = post['sentiment'].get('compound', 0)
+                    if "sentiment" in post and isinstance(post["sentiment"], dict):
+                        sentiment_value = post["sentiment"].get("compound", 0)
                         if isinstance(sentiment_value, (int, float)):
                             recent_sentiments.append(sentiment_value)
-                    
+
                     # Process comments if available
-                    if 'comments' in post and post['comments']:
-                        for comment in post['comments']:
-                            if isinstance(comment.get('sentiment'), dict):
-                                comment_sentiment = comment['sentiment'].get('compound', 0)
+                    if "comments" in post and post["comments"]:
+                        for comment in post["comments"]:
+                            if isinstance(comment.get("sentiment"), dict):
+                                comment_sentiment = comment["sentiment"].get(
+                                    "compound", 0
+                                )
                                 if isinstance(comment_sentiment, (int, float)):
                                     recent_sentiments.append(comment_sentiment)
-                                    
+
                                     # Classify sentiment
                                     if comment_sentiment > 0.2:
                                         recent_bull_ratio.append(1)
@@ -1103,28 +1130,41 @@ class EnhancedStockAnalyzer:
                                     else:
                                         recent_bull_ratio.append(0)
                                         recent_bear_ratio.append(0)
-                
+
                 if recent_sentiments:
-                    metrics.update({
-                        'recent_sentiment_avg': float(np.mean(recent_sentiments)),
-                        'recent_sentiment_std': float(np.std(recent_sentiments)) if len(recent_sentiments) > 1 else 0,
-                        'recent_bull_ratio': float(np.mean(recent_bull_ratio)) if recent_bull_ratio else 0.5,
-                        'recent_bear_ratio': float(np.mean(recent_bear_ratio)) if recent_bear_ratio else 0.5,
-                        'sentiment_confidence': len(recent_sentiments)
-                    })
-                    
+                    metrics.update(
+                        {
+                            "recent_sentiment_avg": float(np.mean(recent_sentiments)),
+                            "recent_sentiment_std": float(np.std(recent_sentiments))
+                            if len(recent_sentiments) > 1
+                            else 0,
+                            "recent_bull_ratio": float(np.mean(recent_bull_ratio))
+                            if recent_bull_ratio
+                            else 0.5,
+                            "recent_bear_ratio": float(np.mean(recent_bear_ratio))
+                            if recent_bear_ratio
+                            else 0.5,
+                            "sentiment_confidence": len(recent_sentiments),
+                        }
+                    )
+
                     # Calculate sentiment strength
                     sentiment_signals = [
-                        metrics['recent_sentiment_avg'] > 0,  # Positive recent sentiment
-                        metrics['recent_bull_ratio'] > 0.6,  # Strong bullish ratio
-                        metrics['sentiment_momentum'] > 0 if 'sentiment_momentum' in metrics else False,
-                        metrics['recent_bear_ratio'] < 0.3,  # Low bearish ratio
+                        metrics["recent_sentiment_avg"]
+                        > 0,  # Positive recent sentiment
+                        metrics["recent_bull_ratio"] > 0.6,  # Strong bullish ratio
+                        metrics["sentiment_momentum"] > 0
+                        if "sentiment_momentum" in metrics
+                        else False,
+                        metrics["recent_bear_ratio"] < 0.3,  # Low bearish ratio
                     ]
-                    
-                    metrics['sentiment_strength'] = float(sum(sentiment_signals) / len(sentiment_signals)) * 100
-            
+
+                    metrics["sentiment_strength"] = (
+                        float(sum(sentiment_signals) / len(sentiment_signals)) * 100
+                    )
+
             return metrics
-            
+
         except Exception as e:
             logger.error(f" Error analyzing sentiment metrics for {ticker}: {str(e)}")
             return {}
