@@ -34,18 +34,18 @@ def main():
         "investing",
         "stockmarket",
         "robinhood",
-        "Superstonk",
+        # "Superstonk",
         "ValueInvesting",
         "Wallstreetbetsnew",
-        "stonks",
+        # "stonks",
     ]
     final_results = []
 
     for subreddit in subreddits_to_analyze:
-        logger.info(f"Analyzing {subreddit}...")
+        logger.info("Analyzing %s...", subreddit)
         results = analyzer.analyze_subreddit_sentiment(
             subreddit,
-            limit=int(os.getenv("REDDIT_TOP_POST_LIMIT", 20)),
+            limit=int(os.getenv("REDDIT_TOP_POST_LIMIT", "20")),
         )
         if not results.empty:
             final_results.append(results)
@@ -97,7 +97,8 @@ def main():
                         or len(np.unique(stock_returns[-min_len:])) == 1
                     ):
                         logger.warning(
-                            f"Constant returns detected for {ticker} - correlation undefined"
+                            "Constant returns detected for %s - correlation undefined",
+                            ticker
                         )
                         return 0.0
 
