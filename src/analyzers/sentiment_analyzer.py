@@ -12,9 +12,10 @@ from utils.logging_config import logger
 from openai import OpenAI
 import json
 import os
-from typing import Dict
+from typing import Dict, List
 from scipy.signal import argrelextrema
 from analyzers.technical_analyzer import TechnicalAnalyzer
+from analyzers.transformer_analyzer import FinancialSentimentTransformer
 
 load_dotenv()
 
@@ -48,6 +49,225 @@ class EnhancedStockAnalyzer:
 
         self.sia = SentimentIntensityAnalyzer()
         self.technical_analyzer = TechnicalAnalyzer(llm_connector=self.openai_client)
+        self.financial_transformer = FinancialSentimentTransformer()
+
+    def _analyze_text_sentiment(self, text: str) -> Dict[str, float]:
+        """
+        Enhanced sentiment analysis combining transformers, VADER, and technical features
+        """
+        try:
+            # Get transformer-based sentiment
+            transformer_scores = self.financial_transformer.get_sentiment(text)
+            print(transformer_scores)
+            # Get VADER sentiment for comparison
+            vader_scores = self.sia.polarity_scores(text)
+
+            # Get sentiment features
+            features = self._get_basic_sentiment_features(text)
+
+            # Use transformer's compound score as base
+            base_score = transformer_scores["compound"]
+
+            # Adjust sentiment based on features and context
+            adjusted_score = self._adjust_sentiment_score(base_score, features, text)
+
+            # Use transformer's confidence score
+            confidence_score = transformer_scores["confidence"]
+
+            return {
+                "compound": adjusted_score,
+                "confidence": confidence_score,
+                "vader_scores": vader_scores,
+                "transformer_scores": transformer_scores,
+                "features": features,
+                "pos": transformer_scores["positive"],
+                "neg": transformer_scores["negative"],
+                "neu": transformer_scores["neutral"],
+            }
+
+        except Exception as e:
+            logger.error(f"Error in enhanced sentiment analysis: {str(e)}")
+            # Fallback to VADER if transformer fails
+            vader_scores = self.sia.polarity_scores(text)
+            return {
+                "compound": vader_scores["compound"],
+                "confidence": 0.3,
+                "pos": vader_scores["pos"],
+                "neg": vader_scores["neg"],
+                "neu": vader_scores["neu"],
+                "features": self._get_basic_sentiment_features(text),
+            }
+
+    def analyze_comment_batch(self, comments: List[praw.models.Comment]) -> List[Dict]:
+        """
+        Analyze a batch of Reddit comments efficiently
+
+        Args:
+            comments: List of praw.models.Comment objects
+
+        Returns:
+            List of dictionaries containing comment data and sentiment analysis
+        """
+        try:
+            # Create batch for processing
+            batch_data = []
+
+            # Process comments in batches of 8
+            for i in range(0, len(comments), 8):
+                current_batch = comments[i : i + 8]
+
+                # Process each comment in current batch
+                for comment in current_batch:
+                    try:
+                        # Get sentiment analysis
+                        sentiment = self._analyze_text_sentiment(comment.body)
+
+                        # Calculate weight
+                        weight = self._calculate_comment_weight(comment)
+
+                        # Store processed comment data
+                        batch_data.append(
+                            {
+                                "author": str(comment.author),
+                                "body": comment.body,
+                                "score": comment.score,
+                                "created_utc": dt.datetime.fromtimestamp(
+                                    comment.created_utc
+                                ),
+                                "sentiment": sentiment,
+                                "weight": weight,
+                                "weighted_sentiment": sentiment["compound"] * weight,
+                            }
+                        )
+
+                    except Exception as e:
+                        logger.warning(f"Error processing comment: {str(e)}")
+                        continue
+
+            return batch_data
+
+        except Exception as e:
+            logger.error(f"Error in batch comment analysis: {str(e)}")
+            return []
+
+    def _get_reddit_sentiment(
+        self, subreddit_name: str, time_filter: str, limit: int
+    ) -> pd.DataFrame:
+        """Get Reddit sentiment analysis with improved batch processing"""
+        subreddit = self.reddit.subreddit(subreddit_name)
+        sentiment_data = []
+        post_data = []
+
+        try:
+            for submission in subreddit.top(time_filter=time_filter, limit=limit):
+                # Extract tickers
+                submission_tickers = self.technical_analyzer.extract_stock_tickers(
+                    submission.title + " " + submission.selftext
+                )
+                if not submission_tickers:
+                    continue
+
+                # Analyze submission sentiment
+                submission_sentiment = self._analyze_text_sentiment(
+                    submission.title + " " + submission.selftext
+                )
+
+                # Get comments
+                submission.comments.replace_more(
+                    limit=int(os.getenv("REDDIT_COMMENT_LIMIT", 10))
+                )
+                comments = submission.comments.list()
+
+                # Process comments in batch
+                processed_comments = self.analyze_comment_batch(comments)
+
+                # Calculate sentiment metrics
+                if processed_comments:
+                    sentiment_scores = [
+                        c["sentiment"]["compound"] for c in processed_comments
+                    ]
+                    weighted_scores = [
+                        c["weighted_sentiment"] for c in processed_comments
+                    ]
+
+                    # Calculate averages
+                    avg_base_sentiment = (
+                        np.mean(sentiment_scores) if sentiment_scores else 0
+                    )
+                    avg_weighted_sentiment = (
+                        np.mean(weighted_scores) if weighted_scores else 0
+                    )
+
+                    # Calculate bullish/bearish ratios
+                    bullish_comments = [s for s in weighted_scores if s > 0.2]
+                    bearish_comments = [s for s in weighted_scores if s < -0.2]
+
+                    total_bullish = sum(bullish_comments)
+                    total_bearish = abs(sum(bearish_comments))
+                    total_sentiment = total_bullish + total_bearish
+
+                    bullish_ratio = (
+                        total_bullish / total_sentiment if total_sentiment > 0 else 0
+                    )
+                    bearish_ratio = (
+                        total_bearish / total_sentiment if total_sentiment > 0 else 0
+                    )
+
+                    # Store post data
+                    post_info = {
+                        "post_id": submission.id,
+                        "title": submission.title,
+                        "content": submission.selftext,
+                        "url": submission.url,
+                        "author": str(submission.author),
+                        "score": submission.score,
+                        "num_comments": submission.num_comments,
+                        "upvote_ratio": submission.upvote_ratio,
+                        "created_utc": dt.datetime.fromtimestamp(
+                            submission.created_utc
+                        ),
+                        "tickers": submission_tickers,
+                        "submission_sentiment": submission_sentiment,
+                        "avg_base_sentiment": avg_base_sentiment,
+                        "avg_weighted_sentiment": avg_weighted_sentiment,
+                        "comments": processed_comments,
+                        "subreddit": subreddit_name,
+                    }
+                    post_data.append(post_info)
+
+                    # Add sentiment data for each ticker
+                    for ticker in submission_tickers:
+                        sentiment_data.append(
+                            {
+                                "ticker": ticker,
+                                "title": submission.title,
+                                "score": submission.score,
+                                "num_comments": submission.num_comments,
+                                "upvote_ratio": submission.upvote_ratio,
+                                "comment_sentiment_avg": avg_weighted_sentiment,
+                                "base_sentiment": avg_base_sentiment,
+                                "submission_sentiment": submission_sentiment[
+                                    "compound"
+                                ],
+                                "bullish_comments_ratio": bullish_ratio,
+                                "bearish_comments_ratio": bearish_ratio,
+                                "sentiment_confidence": len(sentiment_scores),
+                                "timestamp": dt.datetime.fromtimestamp(
+                                    submission.created_utc
+                                ),
+                                "post_id": submission.id,
+                            }
+                        )
+
+            # Save to Supabase
+            for post in post_data:
+                self.db.save_post_data(post)
+
+            return pd.DataFrame(sentiment_data)
+
+        except Exception as e:
+            logger.error(f"Error analyzing subreddit {subreddit_name}: {str(e)}")
+            return pd.DataFrame()
 
     def analyze_subreddit_sentiment(
         self, subreddit_name: str, time_filter: str = "day", limit: int = 2
@@ -103,217 +323,6 @@ class EnhancedStockAnalyzer:
             ]
 
         return sentiment_data
-
-    def _get_reddit_sentiment(
-        self, subreddit_name: str, time_filter: str, limit: int
-    ) -> pd.DataFrame:
-        """Get Reddit sentiment analysis with enhanced scoring"""
-        subreddit = self.reddit.subreddit(subreddit_name)
-        sentiment_data = []
-        post_data = []
-
-        try:
-            for submission in subreddit.top(time_filter=time_filter, limit=limit):
-                submission_tickers = self.technical_analyzer.extract_stock_tickers(
-                    submission.title + " " + submission.selftext
-                )
-                if not submission_tickers:
-                    continue
-
-                # First analyze submission sentiment
-                submission_sentiment = self._analyze_text_sentiment(
-                    submission.title + " " + submission.selftext
-                )
-                # Analyze comments with weighted scoring
-                submission.comments.replace_more(
-                    limit=int(os.getenv("REDDIT_COMMENT_LIMIT", 10))
-                )
-                comments = submission.comments.list()
-
-                comment_data = []
-                sentiment_scores = []
-                weighted_scores = []  # Weight scores by comment score and awards
-                bullish_comments = []
-                bearish_comments = []
-
-                for comment in comments:
-                    try:
-                        # Get base sentiment
-                        comment_sentiment = self._analyze_text_sentiment(comment.body)
-                        base_score = comment_sentiment["compound"]
-
-                        # Calculate comment weight based on score and awards
-                        comment_weight = self._calculate_comment_weight(comment)
-
-                        weighted_sentiment = base_score * comment_weight
-                        sentiment_scores.append(base_score)
-                        weighted_scores.append(weighted_sentiment)
-
-                        # Classify comment sentiment
-                        if base_score > 0.1:
-                            bullish_comments.append(weighted_sentiment)
-                        elif base_score < -0.1:
-                            bearish_comments.append(weighted_sentiment)
-
-                        comment_data.append(
-                            {
-                                "author": str(comment.author),
-                                "body": comment.body,
-                                "score": comment.score,
-                                "created_utc": dt.datetime.fromtimestamp(
-                                    comment.created_utc
-                                ),
-                                "sentiment": comment_sentiment,
-                                "weight": comment_weight,
-                            }
-                        )
-                    except Exception as e:
-                        continue
-
-                # Calculate final sentiment metrics
-                avg_base_sentiment = (
-                    np.mean(sentiment_scores) if sentiment_scores else 0
-                )
-                avg_weighted_sentiment = (
-                    np.mean(weighted_scores) if weighted_scores else 0
-                )
-
-                # Calculate bullish/bearish ratios using weighted scores
-                total_bullish = sum(score for score in bullish_comments)
-                total_bearish = abs(sum(score for score in bearish_comments))
-                total_sentiment = total_bullish + total_bearish
-
-                bullish_ratio = (
-                    total_bullish / total_sentiment if total_sentiment > 0 else 0
-                )
-                bearish_ratio = (
-                    total_bearish / total_sentiment if total_sentiment > 0 else 0
-                )
-
-                # Store post data
-                post_info = {
-                    "post_id": submission.id,
-                    "title": submission.title,
-                    "content": submission.selftext,
-                    "url": submission.url,
-                    "author": str(submission.author),
-                    "score": submission.score,
-                    "num_comments": submission.num_comments,
-                    "upvote_ratio": submission.upvote_ratio,
-                    "created_utc": dt.datetime.fromtimestamp(submission.created_utc),
-                    "tickers": submission_tickers,
-                    "submission_sentiment": submission_sentiment,
-                    "avg_base_sentiment": avg_base_sentiment,
-                    "avg_weighted_sentiment": avg_weighted_sentiment,
-                    "comments": comment_data,
-                    "subreddit": subreddit_name,
-                }
-                post_data.append(post_info)
-
-                # Add sentiment data for each ticker
-                for ticker in submission_tickers:
-                    sentiment_data.append(
-                        {
-                            "ticker": ticker,
-                            "title": submission.title,
-                            "score": submission.score,
-                            "num_comments": submission.num_comments,
-                            "upvote_ratio": submission.upvote_ratio,
-                            "comment_sentiment_avg": avg_weighted_sentiment,
-                            "base_sentiment": avg_base_sentiment,
-                            "submission_sentiment": submission_sentiment["compound"],
-                            "bullish_comments_ratio": bullish_ratio,
-                            "bearish_comments_ratio": bearish_ratio,
-                            "sentiment_confidence": len(
-                                sentiment_scores
-                            ),  # Number of analyzed comments
-                            "timestamp": dt.datetime.fromtimestamp(
-                                submission.created_utc
-                            ),
-                            "post_id": submission.id,
-                        }
-                    )
-
-            # Save to Supabase
-            for post in post_data:
-                self.db.save_post_data(post)
-
-            return pd.DataFrame(sentiment_data)
-
-        except Exception as e:
-            logger.error(f"Error analyzing subreddit {subreddit_name}: {str(e)}")
-            return pd.DataFrame()
-
-    def _analyze_text_sentiment(self, text: str) -> Dict[str, float]:
-        """
-        Enhanced sentiment analysis combining VADER, LLM, and technical features
-
-        Args:
-            text: Text to analyze
-
-        Returns:
-            Dict containing combined sentiment scores and metadata
-        """
-        try:
-            # Get base VADER sentiment
-            vader_scores = self.sia.polarity_scores(text)
-
-            # Get basic sentiment features
-            basic_features = self._get_basic_sentiment_features(text)
-
-            # Combine base scores with adjustments
-            base_score = vader_scores["compound"]
-
-            # Adjust sentiment based on features and context
-            adjusted_score = self._adjust_sentiment_score(
-                base_score, basic_features, text
-            )
-
-            # Calculate confidence score
-            confidence_score = min(
-                1.0,
-                (
-                    0.4 * (1 - vader_scores["neu"])  # VADER confidence
-                    # + 0.4 * llm_sentiment.get("confidence", 0)  # LLM confidence
-                    + 0.2
-                    * (len(text) / 1000)  # Length-based confidence (max at 1000 chars)
-                ),
-            )
-
-            # Combine all signals
-            final_compound = (
-                adjusted_score * 0.4  # Adjusted VADER score
-                # + llm_sentiment.get("score", 0) * 0.4  # LLM score
-                + base_score * 0.2  # Original VADER score
-            )
-
-            # Ensure the final score is within [-1, 1]
-            final_compound = max(min(final_compound, 1.0), -1.0)
-
-            return {
-                "compound": final_compound,
-                "confidence": confidence_score,
-                "vader_scores": vader_scores,
-                # "llm_sentiment": llm_sentiment,
-                "features": basic_features,
-                # "terms": llm_sentiment.get("terms", []),
-                "pos": vader_scores["pos"],
-                "neg": vader_scores["neg"],
-                "neu": vader_scores["neu"],
-            }
-
-        except Exception as e:
-            logger.error(f"Error in enhanced sentiment analysis: {str(e)}")
-            # Fallback to basic VADER sentiment
-            vader_scores = self.sia.polarity_scores(text)
-            return {
-                "compound": vader_scores["compound"],
-                "confidence": 0.3,  # Low confidence for fallback
-                "pos": vader_scores["pos"],
-                "neg": vader_scores["neg"],
-                "neu": vader_scores["neu"],
-                "features": self._get_basic_sentiment_features(text),
-            }
 
     def _adjust_sentiment_score(
         self, base_score: float, features: Dict, text: str
@@ -778,10 +787,9 @@ class EnhancedStockAnalyzer:
             logger.error(f"Error saving results: {str(e)}")
             raise  # Re-raise the exception for debugging
 
-    ########### 
+    ###########
     ########### Deprecated methods
     ###########
-    
 
     # def prepare_sentiment_data(self, df: pd.DataFrame) -> Dict:
     #     """

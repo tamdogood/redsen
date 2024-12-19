@@ -29,15 +29,12 @@ def main():
     )
 
     subreddits_to_analyze = [
-        "wallstreetbets",
+        # "wallstreetbets",
         "stocks",
-        "investing",
-        "stockmarket",
-        "robinhood",
-        # "Superstonk",
-        "ValueInvesting",
-        "Wallstreetbetsnew",
-        # "stonks",
+        # "investing",
+        # "stockmarket",
+        # "ValueInvesting",
+        # "Wallstreetbetsnew",
     ]
     final_results = []
 
