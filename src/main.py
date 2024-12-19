@@ -98,7 +98,7 @@ def main():
                     ):
                         logger.warning(
                             "Constant returns detected for %s - correlation undefined",
-                            ticker
+                            ticker,
                         )
                         return 0.0
 

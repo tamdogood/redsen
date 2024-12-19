@@ -125,7 +125,7 @@ class TechnicalAnalyzer:
             "HOME",
             "AI",
             "CHAD",
-            "DCA"
+            "DCA",
         }
 
     def is_valid_ticker(self, ticker: str) -> bool:
