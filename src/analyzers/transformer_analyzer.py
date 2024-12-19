@@ -90,111 +90,111 @@ class FinancialSentimentTransformer:
         """Split text into chunks that respect the model's max length"""
         # Tokenize the full text
         encoded = self.tokenizer.encode(text, truncation=False, add_special_tokens=True)
-        
+
         if len(encoded) <= max_length:
             return [text]
-        
+
         # Split into sentences
-        sentences = re.split(r'(?<=[.!?])\s+', text)
+        sentences = re.split(r"(?<=[.!?])\s+", text)
         chunks = []
         current_chunk = []
         current_length = 0
-        
+
         for sentence in sentences:
             # Get token count for this sentence
             sentence_tokens = self.tokenizer.encode(sentence, add_special_tokens=True)
             sentence_length = len(sentence_tokens)
-            
+
             if sentence_length > max_length:
                 # If single sentence is too long, split by words
                 if current_chunk:
-                    chunks.append(' '.join(current_chunk))
+                    chunks.append(" ".join(current_chunk))
                     current_chunk = []
                     current_length = 0
-                    
+
                 # Split long sentence into smaller pieces
                 words = sentence.split()
                 temp_chunk = []
                 temp_length = 0
-                
+
                 for word in words:
                     word_tokens = self.tokenizer.encode(word, add_special_tokens=True)
                     word_length = len(word_tokens)
-                    
+
                     if temp_length + word_length <= max_length:
                         temp_chunk.append(word)
                         temp_length += word_length
                     else:
                         if temp_chunk:
-                            chunks.append(' '.join(temp_chunk))
+                            chunks.append(" ".join(temp_chunk))
                         temp_chunk = [word]
                         temp_length = word_length
-                
+
                 if temp_chunk:
-                    chunks.append(' '.join(temp_chunk))
-                    
+                    chunks.append(" ".join(temp_chunk))
+
             elif current_length + sentence_length <= max_length:
                 current_chunk.append(sentence)
                 current_length += sentence_length
             else:
                 if current_chunk:
-                    chunks.append(' '.join(current_chunk))
+                    chunks.append(" ".join(current_chunk))
                 current_chunk = [sentence]
                 current_length = sentence_length
-        
+
         if current_chunk:
-            chunks.append(' '.join(current_chunk))
-        
+            chunks.append(" ".join(current_chunk))
+
         return chunks
 
     def get_sentiment(self, text: str, use_cache: bool = True) -> Dict[str, float]:
         """Get sentiment analysis with proper text chunking"""
         if use_cache and text in self.sentiment_cache:
             return self.sentiment_cache[text]
-        
+
         try:
             # Preprocess text
             processed_text = self.preprocess_text(text)
-            
+
             # Split into chunks if necessary
             chunks = self.chunk_text(processed_text)
             chunk_sentiments = []
-            
+
             # Process each chunk
             for chunk in chunks:
                 # Skip empty chunks
                 if not chunk.strip():
                     continue
-                    
+
                 inputs = self.tokenizer(
                     chunk,
                     return_tensors="pt",
                     truncation=True,
                     max_length=512,
-                    padding=True
+                    padding=True,
                 )
                 inputs = {k: v.to(self.device) for k, v in inputs.items()}
-                
+
                 with torch.no_grad():
                     outputs = self.model(**inputs)
                     scores = softmax(outputs.logits, dim=1)
                     chunk_sentiments.append(scores.cpu().numpy()[0])
-            
+
             # Average the sentiment scores across chunks
             if chunk_sentiments:
                 finbert_scores = np.mean(chunk_sentiments, axis=0)
             else:
                 finbert_scores = np.array([0.33, 0.33, 0.34])  # Neutral fallback
-            
+
             # Get general sentiment (use first chunk if text is too long)
             first_chunk = chunks[0] if chunks else processed_text
             general_sentiment = self.general_sentiment(first_chunk)[0]
-            general_score = 1.0 if general_sentiment['label'] == 'POSITIVE' else -1.0
-            general_confidence = general_sentiment['score']
-            
+            general_score = 1.0 if general_sentiment["label"] == "POSITIVE" else -1.0
+            general_confidence = general_sentiment["score"]
+
             # Get phrase-based sentiment
             phrase_sentiment = self._analyze_financial_phrases(processed_text)
-            
+
             # Combine scores with weights
             combined_score = self._combine_sentiment_scores(
                 finbert_positive=float(finbert_scores[0]),
@@ -202,16 +202,16 @@ class FinancialSentimentTransformer:
                 finbert_neutral=float(finbert_scores[2]),
                 general_score=general_score,
                 general_confidence=general_confidence,
-                phrase_sentiment=phrase_sentiment
+                phrase_sentiment=phrase_sentiment,
             )
-            
+
             # Calculate confidence score
             confidence = self._calculate_confidence(
                 finbert_neutral=float(finbert_scores[2]),
                 general_confidence=general_confidence,
-                text_length=len(processed_text)
+                text_length=len(processed_text),
             )
-            
+
             result = {
                 "compound": combined_score,
                 "positive": float(finbert_scores[0]),
@@ -221,31 +221,43 @@ class FinancialSentimentTransformer:
                 "phrase_sentiment": phrase_sentiment,
                 "general_sentiment": {
                     "score": general_score,
-                    "confidence": general_confidence
-                }
+                    "confidence": general_confidence,
+                },
             }
-            
+
             if use_cache:
                 self.sentiment_cache[text] = result
-            
+
             return result
-            
+
         except Exception as e:
             print(f"Error in sentiment analysis: {str(e)}")
             # Fallback to general sentiment
             try:
                 general_sentiment = self.general_sentiment(processed_text)[0]
                 return {
-                    "compound": 1.0 if general_sentiment['label'] == 'POSITIVE' else -1.0,
-                    "positive": float(general_sentiment['score'] if general_sentiment['label'] == 'POSITIVE' else 0),
-                    "negative": float(general_sentiment['score'] if general_sentiment['label'] == 'NEGATIVE' else 0),
+                    "compound": 1.0
+                    if general_sentiment["label"] == "POSITIVE"
+                    else -1.0,
+                    "positive": float(
+                        general_sentiment["score"]
+                        if general_sentiment["label"] == "POSITIVE"
+                        else 0
+                    ),
+                    "negative": float(
+                        general_sentiment["score"]
+                        if general_sentiment["label"] == "NEGATIVE"
+                        else 0
+                    ),
                     "neutral": 0.0,
-                    "confidence": float(general_sentiment['score']),
+                    "confidence": float(general_sentiment["score"]),
                     "phrase_sentiment": 0.0,
                     "general_sentiment": {
-                        "score": 1.0 if general_sentiment['label'] == 'POSITIVE' else -1.0,
-                        "confidence": float(general_sentiment['score'])
-                    }
+                        "score": 1.0
+                        if general_sentiment["label"] == "POSITIVE"
+                        else -1.0,
+                        "confidence": float(general_sentiment["score"]),
+                    },
                 }
             except:
                 return {
@@ -255,10 +267,7 @@ class FinancialSentimentTransformer:
                     "neutral": 1.0,
                     "confidence": 0.0,
                     "phrase_sentiment": 0.0,
-                    "general_sentiment": {
-                        "score": 0.0,
-                        "confidence": 0.0
-                    }
+                    "general_sentiment": {"score": 0.0, "confidence": 0.0},
                 }
 
     def _analyze_financial_phrases(self, text: str) -> float:

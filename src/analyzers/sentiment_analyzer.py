@@ -53,31 +53,41 @@ class EnhancedStockAnalyzer:
 
     def _analyze_text_sentiment(self, text: str) -> Dict[str, float]:
         """
-        Enhanced sentiment analysis combining transformers, VADER, and technical features
+        Enhanced sentiment analysis combining transformers and VADER
         """
         try:
             # Get transformer-based sentiment
             transformer_scores = self.financial_transformer.get_sentiment(text)
-            # Get VADER sentiment for comparison
+
+            # Get VADER sentiment
             vader_scores = self.sia.polarity_scores(text)
 
             # Get sentiment features
             features = self._get_basic_sentiment_features(text)
 
-            # Use transformer's compound score as base
-            base_score = transformer_scores["compound"]
+            # Combine transformer and VADER scores (weighted average)
+            # Give more weight to transformer since it's financial-specific
+            combined_score = (
+                transformer_scores["compound"] * 0.7
+                + vader_scores["compound"]  # 70% weight to transformer
+                * 0.3  # 30% weight to VADER
+            )
 
-            # Adjust sentiment based on features and context
-            adjusted_score = self._adjust_sentiment_score(base_score, features, text)
+            # Adjust the combined score based on features
+            adjusted_score = self._adjust_sentiment_score(
+                combined_score, features, text
+            )
 
-            # Use transformer's confidence score
-            confidence_score = transformer_scores["confidence"]
+            # Calculate combined confidence score
+            confidence_score = (
+                transformer_scores["confidence"] * 0.7 + (1 - vader_scores["neu"]) * 0.3
+            )
 
+            # Return sentiment analysis with properly combined scores
             return {
                 "compound": adjusted_score,
                 "confidence": confidence_score,
                 "vader_scores": vader_scores,
-                "transformer_scores": transformer_scores,
                 "features": features,
                 "pos": transformer_scores["positive"],
                 "neg": transformer_scores["negative"],
@@ -86,7 +96,7 @@ class EnhancedStockAnalyzer:
 
         except Exception as e:
             logger.error(f"Error in enhanced sentiment analysis: {str(e)}")
-            # Fallback to VADER if transformer fails
+            # Fallback to basic VADER
             vader_scores = self.sia.polarity_scores(text)
             return {
                 "compound": vader_scores["compound"],
