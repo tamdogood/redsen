@@ -58,7 +58,6 @@ class EnhancedStockAnalyzer:
         try:
             # Get transformer-based sentiment
             transformer_scores = self.financial_transformer.get_sentiment(text)
-            print(transformer_scores)
             # Get VADER sentiment for comparison
             vader_scores = self.sia.polarity_scores(text)
 
