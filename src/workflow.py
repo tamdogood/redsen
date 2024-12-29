@@ -1,3 +1,4 @@
+from prefect import flow, task
 import pandas as pd
 import numpy as np
 import datetime as dt
@@ -19,8 +20,10 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 
-def main():
-    analyzer = EnhancedStockAnalyzer(
+@task
+def initialize_analyzer():
+    """Initialize the stock analyzer with credentials"""
+    return EnhancedStockAnalyzer(
         os.getenv("CLIENT_ID", ""),
         os.getenv("CLIENT_SECRET", ""),
         os.getenv("USER_AGENT", ""),
@@ -28,6 +31,10 @@ def main():
         os.getenv("SUPABASE_KEY", ""),
     )
 
+
+@task
+def analyze_subreddits(analyzer: EnhancedStockAnalyzer):
+    """Analyze sentiment across multiple subreddits"""
     subreddits_to_analyze = [
         "wallstreetbets",
         "stocks",
@@ -49,24 +56,27 @@ def main():
 
     if not final_results:
         logger.error("No data collected from any subreddit")
-        return
+        return None
+
+    return final_results
+
+
+@task
+def process_market_data(final_results):
+    """Process market data and calculate correlations"""
+    if not final_results:
+        return None
 
     data_start_date = dt.datetime.now() - dt.timedelta(days=30)
     data_end_date = dt.datetime.now()
 
-    # Process and aggregate results with enhanced metrics
-    market_data = yf.download(
-        "SPY",
-        start=data_start_date,
-        end=data_end_date,
-    )
+    market_data = yf.download("SPY", start=data_start_date, end=data_end_date)
 
     for df in final_results:
         df["analysis_timestamp"] = dt.datetime.now()
-        df["data_start_date"] = dt.datetime.now() - dt.timedelta(days=30)
-        df["data_end_date"] = dt.datetime.now()
+        df["data_start_date"] = data_start_date
+        df["data_end_date"] = data_end_date
 
-        # Add market context with proper scalar conversion
         try:
 
             def calculate_correlation(ticker):
@@ -79,16 +89,13 @@ def main():
                         end=df["data_end_date"].iloc[0],
                     )
 
-                    # Calculate returns
                     market_returns = market_data["Close"].pct_change().dropna()
                     stock_returns = stock_data["Close"].pct_change().dropna()
 
-                    # Ensure we have matching data points
                     min_len = min(len(market_returns), len(stock_returns))
-                    if min_len < 2:  # Need at least 2 points for correlation
+                    if min_len < 2:
                         return 0.0
 
-                    # Check for constant arrays
                     if (
                         len(np.unique(market_returns[-min_len:])) == 1
                         or len(np.unique(stock_returns[-min_len:])) == 1
@@ -99,7 +106,6 @@ def main():
                         )
                         return 0.0
 
-                    # Calculate correlation and extract the scalar value
                     corr = stats.pearsonr(
                         market_returns[-min_len:], stock_returns[-min_len:]
                     )
@@ -123,13 +129,20 @@ def main():
             )
             df["market_correlation"] = 0.0
 
-    # First, verify which columns exist in the DataFrames
-    sample_df = final_results[0] if final_results else pd.DataFrame()
+    return final_results
+
+
+@task
+def aggregate_results(final_results):
+    """Aggregate results and calculate composite scores"""
+    if not final_results:
+        return None
+
+    sample_df = final_results[0]
     available_columns = sample_df.columns.tolist()
 
-    # Define aggregation dictionary with only available columns
+    # Define base aggregation dictionary
     agg_dict = {
-        # Base columns that should always exist
         "score": "mean",
         "num_comments": "sum",
         "market_correlation": "first",
@@ -138,10 +151,8 @@ def main():
         "data_end_date": "first",
     }
 
-    # Optional columns - only add if they exist
-    # Optional columns - only add if they exist
+    # Add optional columns if they exist
     optional_columns = {
-        # Sentiment and Social Metrics
         "comment_sentiment_avg": "mean",
         "base_sentiment": "mean",
         "submission_sentiment": "mean",
@@ -149,7 +160,6 @@ def main():
         "bearish_comments_ratio": "mean",
         "sentiment_confidence": "mean",
         "upvote_ratio": "mean",
-        # Price Metrics
         "current_price": "first",
         "price_change_1d": "first",
         "price_change_1w": "first",
@@ -157,7 +167,6 @@ def main():
         "price_gaps": "first",
         "price_trend": "first",
         "support_resistance": "first",
-        # Volume Metrics
         "volume_sma": "first",
         "volume_ratio": "first",
         "avg_volume_10d": "first",
@@ -166,7 +175,6 @@ def main():
         "volume_momentum": "first",
         "volume_trend": "first",
         "relative_volume": "first",
-        # Technical Indicators
         "sma_20": "first",
         "ema_9": "first",
         "rsi": "first",
@@ -180,13 +188,11 @@ def main():
         "adx": "first",
         "cci": "first",
         "money_flow_index": "first",
-        # Volatility Metrics
         "volatility": "first",
         "volatility_daily": "first",
         "volatility_weekly": "first",
         "volatility_monthly": "first",
         "volatility_trend": "first",
-        # Bollinger Bands and Other Bands
         "bollinger_upper": "first",
         "bollinger_lower": "first",
         "bb_upper": "first",
@@ -194,48 +200,30 @@ def main():
         "bb_middle": "first",
         "keltner_channels": "first",
         "atr": "first",
-        # Market and Sector Metrics
         "sector_performance": "first",
         "market_indicators": "first",
         "relative_strength": "first",
         "beta": "first",
-        # Fundamental Metrics
-        "debt_to_equity": "first",
-        "roe": "first",
-        "current_ratio": "first",
-        "quick_ratio": "first",
-        "operating_margin": "first",
-        "asset_turnover": "first",
-        "roa": "first",
-        # Financial Statement Data
-        "total_assets": "first",
-        "total_liabilities": "first",
-        "equity": "first",
-        "revenue": "first",
-        "eps": "first",
-        "operating_cash_flow": "first",
-        "financing_cash_flow": "first",
-        # Filing Information
-        "fiscal_period": "first",
-        "fiscal_year": "first",
-        "filing_date": "first",
     }
 
-    # Add optional columns only if they exist in the DataFrame
     for col, agg_func in optional_columns.items():
         if col in available_columns:
             agg_dict[col] = agg_func
 
-    # Combine and aggregate results with available metrics
-    combined_results = (
-        pd.concat(final_results).groupby("ticker").agg(agg_dict)
-    )  # Remove reset_index() here as ticker is already the index
+    combined_results = pd.concat(final_results).groupby("ticker").agg(agg_dict)
 
-    # Reset index only if ticker is not already a column
     if "ticker" not in combined_results.columns:
         combined_results = combined_results.reset_index()
 
-    # Update composite score calculation with only available columns
+    return combined_results
+
+
+@task
+def calculate_scores(combined_results):
+    """Calculate final scores and prepare top stocks"""
+    if combined_results is None:
+        return None
+
     score_components = []
 
     # Social and Sentiment Components (40%)
@@ -275,53 +263,72 @@ def main():
             combined_results["market_correlation"].rank(pct=True) * 0.10
         )
 
-    # Calculate composite score only with available components
     combined_results["composite_score"] = sum(score_components)
-
     top_stocks = combined_results.nlargest(150, "composite_score")
 
-    # Update fill values dictionary only with available columns
-    fill_values = {}
-    for col in combined_results.columns:
-        if col in ["score", "num_comments"]:
-            fill_values[col] = 0
-        elif col in [
-            "comment_sentiment_avg",
-            "base_sentiment",
-            "submission_sentiment",
-            "bullish_comments_ratio",
-            "bearish_comments_ratio",
-        ]:
-            fill_values[col] = 0
-        elif col == "rsi":
-            fill_values[col] = 50
-        elif col in ["volume_ratio", "composite_score", "market_correlation"]:
-            fill_values[col] = 0
+    fill_values = {
+        "score": 0,
+        "num_comments": 0,
+        "comment_sentiment_avg": 0,
+        "base_sentiment": 0,
+        "submission_sentiment": 0,
+        "bullish_comments_ratio": 0,
+        "bearish_comments_ratio": 0,
+        "rsi": 50,
+        "volume_ratio": 0,
+        "composite_score": 0,
+        "market_correlation": 0,
+        "price_change_1d": 0,
+        "price_change_1w": 0,
+        "price_change_1m": 0,
+        "volume_sma": 0,
+        "relative_volume": 0,
+        "volatility": 0,
+    }
 
     top_stocks = top_stocks.replace([np.inf, -np.inf], np.nan)
     top_stocks = top_stocks.fillna(fill_values)
 
-    # Add data quality score based on available metrics
+    # Calculate data quality score
     top_stocks["data_quality_score"] = top_stocks.apply(
         lambda row: sum(pd.notnull(row)) / len(row), axis=1
     )
 
-    # logger.info("Preparing data for model training...")
+    return top_stocks
 
-    # Save results with quality metadata
+
+@task
+def save_results(analyzer: EnhancedStockAnalyzer, top_stocks):
+    """Save results to storage and database"""
+    if top_stocks is None:
+        return
+
     if os.getenv("SAVE_TO_STORAGE", "0") == "1":
-        # analyzer.save_results_to_storage(top_stocks)
         analyzer.db.save_sentiment_analysis(top_stocks)
 
     analyzer.save_results(top_stocks)
 
-    # Log summary
-    logger.info("Processed %d unique tickers", len(combined_results))
+    logger.info("Processed %d unique tickers", len(top_stocks))
     logger.info("Top ticker by sentiment: %s", top_stocks.iloc[0]["ticker"])
     logger.info(
         "Top ticker composite score: %.2f", top_stocks.iloc[0]["composite_score"]
     )
 
 
+@flow(name="Stock Analysis Flow")
+def stock_analysis_flow():
+    """Main flow for stock analysis"""
+    analyzer = initialize_analyzer()
+    final_results = analyze_subreddits(analyzer)
+    processed_results = process_market_data(final_results)
+    combined_results = aggregate_results(processed_results)
+    top_stocks = calculate_scores(combined_results)
+    save_results(analyzer, top_stocks)
+
+
 if __name__ == "__main__":
-    main()
+    stock_analysis_flow.serve(
+        name="stock_analysis_scheduled",
+        cron="0 3 * * *",
+        tags=["stock-analysis"],
+    )

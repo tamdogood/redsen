@@ -230,15 +230,15 @@ class FinancialSentimentTransformer:
 
             return result
 
-        except Exception as e:
+        except (ValueError, KeyError, TypeError) as e:
             print(f"Error in sentiment analysis: {str(e)}")
             # Fallback to general sentiment
             try:
                 general_sentiment = self.general_sentiment(processed_text)[0]
                 return {
-                    "compound": 1.0
-                    if general_sentiment["label"] == "POSITIVE"
-                    else -1.0,
+                    "compound": (
+                        1.0 if general_sentiment["label"] == "POSITIVE" else -1.0
+                    ),
                     "positive": float(
                         general_sentiment["score"]
                         if general_sentiment["label"] == "POSITIVE"
@@ -253,13 +253,16 @@ class FinancialSentimentTransformer:
                     "confidence": float(general_sentiment["score"]),
                     "phrase_sentiment": 0.0,
                     "general_sentiment": {
-                        "score": 1.0
-                        if general_sentiment["label"] == "POSITIVE"
-                        else -1.0,
+                        "score": (
+                            1.0 if general_sentiment["label"] == "POSITIVE" else -1.0
+                        ),
                         "confidence": float(general_sentiment["score"]),
                     },
                 }
-            except:
+            except (ValueError, KeyError, TypeError) as fallback_exception:
+                print(
+                    f"Error in fallback sentiment analysis: {str(fallback_exception)}"
+                )
                 return {
                     "compound": 0.0,
                     "positive": 0.0,

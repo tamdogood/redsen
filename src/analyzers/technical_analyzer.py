@@ -826,11 +826,11 @@ class TechnicalAnalyzer:
                         "sector_sma20": round(
                             etf_aggs["close"].rolling(20).mean().iloc[-1], 2
                         ),
-                        "sector_sma50": round(
-                            etf_aggs["close"].rolling(50).mean().iloc[-1], 2
-                        )
-                        if len(etf_aggs) >= 50
-                        else None,
+                        "sector_sma50": (
+                            round(etf_aggs["close"].rolling(50).mean().iloc[-1], 2)
+                            if len(etf_aggs) >= 50
+                            else None
+                        ),
                     }
                 )
 

@@ -398,9 +398,9 @@ class PolygonConnector:
                         logger.debug(
                             f"Processing balance sheet item: {key}, type: {type(value)}"
                         )
-                        parsed["financials"]["balance_sheet"][
-                            key
-                        ] = self._parse_datapoint(value)
+                        parsed["financials"]["balance_sheet"][key] = (
+                            self._parse_datapoint(value)
+                        )
 
                 # Parse income statement
                 income_stmt = getattr(financials, "income_statement", None)
