@@ -7,6 +7,7 @@ from pathlib import Path
 import gzip
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
+from connectors.supabase_connector import SupabaseConnector
 from utils.logging_config import logger
 
 
@@ -76,14 +77,16 @@ class PolygonDataDownloader:
         """Get list of available files within date range"""
         paginator = self.s3.get_paginator("list_objects_v2")
         files = []
-
+        print("Fetching files")
         for page in paginator.paginate(
             Bucket="flatfiles", Prefix="us_stocks_sip/trades_v1/"
-        ):
+        ):  
+            print("Fetching files 1")
             if "Contents" not in page:
                 continue
 
             for obj in page["Contents"]:
+                print("Fetching files 2")
                 key = obj["Key"]
                 try:
                     # Extract date from file path
@@ -94,7 +97,7 @@ class PolygonDataDownloader:
                         files.append(key)
                 except (ValueError, IndexError):
                     continue
-
+        print("Fetching files 3")
         return files
 
     def _process_file(self, file_key: str, bucket_name: str) -> Dict:
@@ -154,6 +157,7 @@ class PolygonDataDownloader:
 
             # Get available files
             files = self._get_available_files(start_date, end_date)
+            print(files)
             logger.info(f"Found {len(files)} files to process")
 
             if not files:
@@ -194,22 +198,22 @@ class PolygonDataDownloader:
 
 
 supabase = SupabaseConnector(
-    url=os.getenv("SUPABASE_URL", ""),
-    key=os.getenv("SUPABASE_KEY", ""),
+    supabase_url=os.getenv("SUPABASE_URL", ""),
+    supabase_key=os.getenv("SUPABASE_KEY", ""),
 )
 
 downloader = PolygonDataDownloader(
-    access_key=os.getenv("SUPABASE_URL", ""),
-    secret_key=os.getenv("POLYGON_API_KEY", ""),
+    access_key=os.getenv("POLYGON_S3_KEY_ID", ""),
+    secret_key=os.getenv("POLYGON_S3_ACCESS_KEY", ""),
     supabase_connector=supabase,
     max_workers=4,
 )
 
 # Download last 30 days of data
-result = downloader.download_historical_data(bucket_name="historical-data", days=30)
+result = downloader.download_historical_data(bucket_name="historical-data", days=5)
 
 # Or download 2 years of data
-result = downloader.download_historical_data(bucket_name="historical-data", years=2)
+# result = downloader.download_historical_data(bucket_name="historical-data", years=2)
 
 # Check results
 if result["success"]:

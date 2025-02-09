@@ -1,3 +1,4 @@
+/src/historical_data/downloader.*
 /src/analysis_results
 .env
 venv
