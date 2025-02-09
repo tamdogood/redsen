@@ -164,7 +164,8 @@ def create_sentiment_heatmap(df, metric, title):
     except Exception as e:
         st.error(f"Error creating heatmap: {str(e)}")
         return None
-    
+
+
 def load_post_data(tickers, start_date, end_date):
     try:
         post_ids_response = (

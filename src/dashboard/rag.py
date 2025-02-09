@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
 import numpy as np
+import json
 from typing import List, Dict, Any
 import re
 from openai import OpenAI
@@ -263,6 +264,232 @@ def calculate_advanced_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     return metrics
 
 
+def extract_ticker_and_timeframe(user_input: str) -> Dict[str, Any]:
+    """
+    Use LLM to extract stock ticker and timeframe from natural language input.
+    Returns a dictionary with extracted information and normalized dates.
+
+    Args:
+        user_input (str): Natural language query from user
+
+    Returns:
+        Dict containing:
+            - ticker (str): Extracted stock ticker
+            - start_date (datetime): Calculated start date based on timeframe
+            - end_date (datetime): Calculated end date (usually current date)
+            - timeframe_type (str): Type of timeframe mentioned (day, week, month, year)
+            - timeframe_value (int): Number of time units
+            - original_query (str): Original user input
+    """
+    try:
+        messages = [
+            {
+                "role": "system",
+                "content": """You are a financial data extraction assistant. Extract the stock ticker 
+                and timeframe from the user's query. Return only a JSON object with the following fields:
+                - ticker: The stock ticker (uppercase)
+                - timeframe_type: One of [day, week, month, year] or null if not specified
+                - timeframe_value: Number of time units (integer) or null if not specified
+                
+                Example 1: "Show me AAPL sentiment for the last 2 weeks"
+                {"ticker": "AAPL", "timeframe_type": "week", "timeframe_value": 2}
+                
+                Example 2: "What's the latest on TSLA?"
+                {"ticker": "TSLA", "timeframe_type": null, "timeframe_value": null}""",
+            },
+            {"role": "user", "content": user_input},
+        ]
+
+        response = openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=messages,
+            temperature=0,
+            max_tokens=150,
+            response_format={"type": "json_object"},
+        )
+
+        # Parse LLM response
+        extracted = json.loads(response.choices[0].message.content)
+
+        # Calculate dates based on timeframe
+        end_date = datetime.now()
+        start_date = end_date
+
+        if extracted["timeframe_type"] and extracted["timeframe_value"]:
+            time_mapping = {
+                "day": lambda x: timedelta(days=x),
+                "week": lambda x: timedelta(weeks=x),
+                "month": lambda x: timedelta(days=x * 30),
+                "year": lambda x: timedelta(days=x * 365),
+            }
+
+            delta_func = time_mapping.get(extracted["timeframe_type"])
+            if delta_func:
+                start_date = end_date - delta_func(extracted["timeframe_value"])
+        else:
+            # Default to 1 week if no timeframe specified
+            start_date = end_date - timedelta(weeks=1)
+
+        return {
+            "ticker": extracted["ticker"],
+            "start_date": start_date,
+            "end_date": end_date,
+            "timeframe_type": extracted["timeframe_type"],
+            "timeframe_value": extracted["timeframe_value"],
+            "original_query": user_input,
+        }
+
+    except Exception as e:
+        # Fall back to regex-based extraction if LLM fails
+        return fallback_extract_ticker(user_input)
+
+
+def create_sentiment_trend_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
+    """Create sentiment trend chart with both line and scatter plots"""
+    fig = go.Figure()
+
+    # Add line plot
+    fig.add_trace(
+        go.Scatter(
+            x=df["timestamp"],
+            y=df["comment_sentiment_avg"],
+            mode="lines",
+            name="Sentiment Trend",
+            line=dict(color="blue", width=2),
+        )
+    )
+
+    # Add scatter plot
+    fig.add_trace(
+        go.Scatter(
+            x=df["timestamp"],
+            y=df["comment_sentiment_avg"],
+            mode="markers",
+            name="Daily Sentiment",
+            marker=dict(size=8, color="blue", symbol="circle"),
+        )
+    )
+
+    fig.update_layout(
+        title=f"{ticker} Sentiment Trend",
+        xaxis_title="Date",
+        yaxis_title="Sentiment Score",
+        hovermode="x unified",
+    )
+
+    return fig
+
+
+def display_sentiment_analysis(response: Dict[str, Any]) -> None:
+    """Display sentiment analysis with charts and metrics"""
+    if response["data"] is not None:
+        df = response["data"]
+
+        # Create metrics row
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Latest Sentiment", f"{df['comment_sentiment_avg'].iloc[0]:.2f}")
+        with col2:
+            st.metric("Bullish Ratio", f"{df['bullish_comments_ratio'].iloc[0]:.1%}")
+        with col3:
+            st.metric("Total Comments", f"{int(df['num_comments'].iloc[0])}")
+
+        # Create and display trend chart
+        fig = create_sentiment_trend_chart(df, response["ticker"])
+        st.plotly_chart(
+            fig, use_container_width=True, key=f"sentiment_trend_{response['ticker']}"
+        )
+
+        # Display additional charts if needed
+        if "price_change" in df.columns:
+            price_fig = create_price_chart(df, response["ticker"])
+            st.plotly_chart(
+                price_fig,
+                use_container_width=True,
+                key=f"price_trend_{response['ticker']}",
+            )
+
+        if "volume" in df.columns:
+            volume_fig = create_volume_chart(df, response["ticker"])
+            st.plotly_chart(
+                volume_fig,
+                use_container_width=True,
+                key=f"volume_trend_{response['ticker']}",
+            )
+
+
+def create_price_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
+    """Create price trend chart"""
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            x=df["timestamp"],
+            y=df["price_change"],
+            mode="lines+markers",
+            name="Price Change",
+            line=dict(color="green", width=2),
+        )
+    )
+
+    fig.update_layout(
+        title=f"{ticker} Price Change",
+        xaxis_title="Date",
+        yaxis_title="Price Change (%)",
+        hovermode="x unified",
+    )
+
+    return fig
+
+
+def create_volume_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
+    """Create volume trend chart"""
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(
+            x=df["timestamp"],
+            y=df["volume"],
+            name="Trading Volume",
+            marker_color="rgba(0, 128, 0, 0.5)",
+        )
+    )
+
+    fig.update_layout(
+        title=f"{ticker} Trading Volume",
+        xaxis_title="Date",
+        yaxis_title="Volume",
+        hovermode="x unified",
+    )
+
+    return fig
+
+
+def fallback_extract_ticker(user_input: str) -> Dict[str, Any]:
+    """Fallback method using regex to extract ticker when LLM fails"""
+    patterns = [
+        r"\$([A-Z]{1,5})\b",  # Matches tickers with $ prefix
+        r"\b([A-Z]{1,5})\b(?!\.[A-Z]{1,2})",  # Matches uppercase words, excludes file extensions
+    ]
+
+    tickers = []
+    for pattern in patterns:
+        tickers.extend(re.findall(pattern, user_input.upper()))
+
+    ticker = tickers[0] if tickers else None
+    end_date = datetime.now()
+    start_date = end_date - timedelta(weeks=1)  # Default to 1 week
+
+    return {
+        "ticker": ticker,
+        "start_date": start_date,
+        "end_date": end_date,
+        "timeframe_type": None,
+        "timeframe_value": None,
+        "original_query": user_input,
+    }
+
+
 def get_llm_analysis(data: Dict[str, Any], user_query: str) -> str:
     """Generate LLM analysis of the sentiment data"""
     try:
@@ -309,40 +536,34 @@ def get_llm_analysis(data: Dict[str, Any], user_query: str) -> str:
 
 
 def process_user_input(user_input: str) -> Dict[str, Any]:
-    """Process user input and generate appropriate response"""
-    patterns = [
-        r"\$([A-Z]{1,5})\b",  # Matches tickers with $ prefix
-        r"\b([A-Z]{1,5})\b(?!\.[A-Z]{1,2})",  # Matches uppercase words, excludes file extensions
-    ]
-
-    tickers = []
-    for pattern in patterns:
-        tickers.extend(re.findall(pattern, user_input.upper()))
-
-    # ticker_match = re.search(r"\b[A-Za-z]{1,5}\b", user_input.upper())
-    # ticker = ticker_match.group(0) if ticker_match else None
-    ticker = tickers[0] if tickers else None
+    """Process user input and generate appropriate response with visualization"""
+    # Extract ticker and timeframe
+    extracted = extract_ticker_and_timeframe(user_input)
 
     response = {
-        "ticker": ticker,
+        "ticker": extracted["ticker"],
         "type": "text",
         "content": "",
         "data": None,
         "llm_response": None,
     }
 
-    if not ticker:
+    if not extracted["ticker"]:
         response["content"] = (
             "I couldn't identify a stock ticker. Please mention a ticker symbol (e.g., AAPL, TSLA)."
         )
         return response
 
-    # Load data
-    df = load_sentiment_data(ticker, datetime.now() - timedelta(days=7), datetime.now())
-    posts = load_posts_for_ticker(ticker)
+    # Load data using extracted timeframe
+    df = load_sentiment_data(
+        extracted["ticker"], extracted["start_date"], extracted["end_date"]
+    )
+    posts = load_posts_for_ticker(extracted["ticker"])
 
     if df.empty:
-        response["content"] = f"I couldn't find any sentiment data for {ticker}."
+        response["content"] = (
+            f"I couldn't find any sentiment data for {extracted['ticker']}."
+        )
         return response
 
     # Prepare data for LLM
@@ -352,7 +573,7 @@ def process_user_input(user_input: str) -> Dict[str, Any]:
     )
 
     llm_data = {
-        "ticker": ticker,
+        "ticker": extracted["ticker"],
         "sentiment_score": safe_format(latest["comment_sentiment_avg"]),
         "bullish_ratio": safe_format(latest["bullish_comments_ratio"], ".1%"),
         "bearish_ratio": safe_format(latest["bearish_comments_ratio"], ".1%"),
@@ -368,18 +589,36 @@ def process_user_input(user_input: str) -> Dict[str, Any]:
     # Get LLM analysis
     llm_response = get_llm_analysis(llm_data, user_input)
 
-    # Determine response type
+    # Determine response type and display appropriate visualization
     input_lower = user_input.lower()
     if "sentiment" in input_lower or "analysis" in input_lower:
         response["type"] = "sentiment"
+        st.write(llm_response)
+        display_sentiment_analysis(
+            {"ticker": extracted["ticker"], "data": df, "type": "sentiment"}
+        )
     elif (
         "posts" in input_lower or "reddit" in input_lower or "discussion" in input_lower
     ):
         response["type"] = "posts"
+        st.write(llm_response)
+        # Display recent posts in a nice format
+        for post in posts[:5]:
+            st.markdown(f"**{post['reddit_posts']['title']}**")
+            st.markdown(f"*Score: {post['reddit_posts']['score']}*")
+            st.markdown("---")
     elif "trend" in input_lower or "chart" in input_lower:
         response["type"] = "trend"
+        st.write(llm_response)
+        display_sentiment_analysis(
+            {"ticker": extracted["ticker"], "data": df, "type": "trend"}
+        )
     else:
         response["type"] = "overview"
+        st.write(llm_response)
+        display_sentiment_analysis(
+            {"ticker": extracted["ticker"], "data": df, "type": "overview"}
+        )
 
     response["content"] = llm_response
     response["data"] = df
