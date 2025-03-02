@@ -9,6 +9,7 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 from connectors.supabase_connector import SupabaseConnector
 from utils.logging_config import logger
+import gzip
 
 
 class PolygonDataDownloader:
@@ -29,8 +30,8 @@ class PolygonDataDownloader:
 
         # Initialize Polygon.io S3 client
         self.s3 = boto3.Session(
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
+            aws_access_key_id=secret_key,
+            aws_secret_access_key=access_key,
         ).client(
             "s3",
             endpoint_url="https://files.polygon.io",
@@ -77,16 +78,13 @@ class PolygonDataDownloader:
         """Get list of available files within date range"""
         paginator = self.s3.get_paginator("list_objects_v2")
         files = []
-        print("Fetching files")
         for page in paginator.paginate(
-            Bucket="flatfiles", Prefix="us_stocks_sip/trades_v1/"
-        ):  
-            print("Fetching files 1")
+            Bucket="flatfiles", Prefix="us_stocks_sip/day_aggs_v1/"
+        ):
             if "Contents" not in page:
                 continue
 
             for obj in page["Contents"]:
-                print("Fetching files 2")
                 key = obj["Key"]
                 try:
                     # Extract date from file path
@@ -97,7 +95,6 @@ class PolygonDataDownloader:
                         files.append(key)
                 except (ValueError, IndexError):
                     continue
-        print("Fetching files 3")
         return files
 
     def _process_file(self, file_key: str, bucket_name: str) -> Dict:
@@ -107,26 +104,46 @@ class PolygonDataDownloader:
             local_path = self.temp_dir / file_key.split("/")[-1]
             self.s3.download_file("flatfiles", file_key, str(local_path))
 
-            # Upload to Supabase storage
-            upload_path = f"historical/{file_key.split('/')[-1]}"
-            with open(local_path, "rb") as f:
+            # Ensure file exists after download
+            if not local_path.exists():
+                raise FileNotFoundError(f"Downloaded file {local_path} not found.")
+
+
+            upload_filename = file_key.split("/")[-1].replace(
+                ".gz", ""
+            )  # Convert 'file.csv.gz' → 'file.csv'
+            upload_path = f"historical_data/{upload_filename}"
+
+            try:
+                with gzip.open(local_path, "rb") as f:
+                    file_content = f.read()  # Decompress the gzip content
+
+                # Upload to Supabase with updated filename
                 result = self.supabase.save_to_storage(
                     {
-                        "content": f.read(),
+                        "content": file_content,
                         "path": upload_path,
-                        "content_type": "application/gzip",
+                        "content_type": "text/csv",
                     },
                     bucket_name,
                 )
 
-            # Clean up
-            local_path.unlink()
+                if result is None:
+                    raise ValueError("Supabase storage response is None.")
+
+            except Exception as e:
+                logger.error(f"Error saving to storage bucket: {str(e)}")
+                return {"success": False, "file": file_key, "error": str(e)}
+
+            finally:
+                # Clean up temp file
+                if local_path.exists():
+                    local_path.unlink()
 
             return {
                 "success": True,
-                "file": file_key,
-                "upload_path": upload_path,
-                "result": result,
+                "file": upload_filename,
+                "message": "File processed and uploaded successfully.",
             }
 
         except Exception as e:
@@ -151,13 +168,13 @@ class PolygonDataDownloader:
             Dict with operation results
         """
         try:
+
             # Get date range
             start_date, end_date = self._get_date_range(years=years, days=days)
             logger.info(f"Fetching data from {start_date} to {end_date}")
 
             # Get available files
             files = self._get_available_files(start_date, end_date)
-            print(files)
             logger.info(f"Found {len(files)} files to process")
 
             if not files:
@@ -203,14 +220,14 @@ supabase = SupabaseConnector(
 )
 
 downloader = PolygonDataDownloader(
-    access_key=os.getenv("POLYGON_S3_KEY_ID", ""),
-    secret_key=os.getenv("POLYGON_S3_ACCESS_KEY", ""),
+    access_key=os.getenv("POLYGON_S3_ACCESS_KEY", ""),
+    secret_key=os.getenv("POLYGON_S3_KEY_ID", ""),
     supabase_connector=supabase,
     max_workers=4,
 )
 
 # Download last 30 days of data
-result = downloader.download_historical_data(bucket_name="historical-data", days=5)
+result = downloader.download_historical_data(bucket_name="historical_data", days=6)
 
 # Or download 2 years of data
 # result = downloader.download_historical_data(bucket_name="historical-data", years=2)

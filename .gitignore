@@ -1,5 +1,6 @@
 /src/historical_data/downloader.*
 /src/analysis_results
+/src/flat_files_downloader.py
 .env
 venv
 # Byte-compiled / optimized / DLL files
